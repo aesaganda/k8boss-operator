@@ -1,0 +1,11 @@
+# The CRD definitions themselves. Applied by `make install` and by
+# `config/default`, deliberately NOT delivered through Argo CD — see the
+# comment in deploy/gitops/argocd/project.yaml for why the GitOps project's
+# clusterResourceWhitelist admits the PlatformConfig *instance* but not the
+# CustomResourceDefinitions that define it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - bases/k8boss.io_platformconfigs.yaml
+  - bases/k8boss.io_runtimesecuritypolicies.yaml
+  - bases/k8boss.io_segmentationpolicies.yaml

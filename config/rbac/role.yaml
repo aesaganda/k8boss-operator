@@ -1,0 +1,33 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8boss-operator
+rules:
+- apiGroups:
+  - k8boss.io
+  resources:
+  - platformconfigs
+  - runtimesecuritypolicies
+  - segmentationpolicies
+  verbs:
+  - get
+  - list
+  - update
+  - watch
+- apiGroups:
+  - k8boss.io
+  resources:
+  - platformconfigs/status
+  - runtimesecuritypolicies/status
+  - segmentationpolicies/status
+  verbs:
+  - get
+  - update
+- apiGroups:
+  - k8boss.io
+  resources:
+  - runtimesecuritypolicies/finalizers
+  - segmentationpolicies/finalizers
+  verbs:
+  - update

@@ -1,0 +1,44 @@
+# Leader-election privileges — deliberately a SEPARATE manifest from the
+# marker-generated role.yaml, and a namespaced Role rather than a ClusterRole.
+#
+# Why the split: role.yaml is generated from +kubebuilder:rbac markers and says
+# exactly what the reconcilers touch (k8boss.io CRDs and nothing else). Leader
+# election is a property of the *manager process*, not of any reconciler, and
+# no marker asks for it (see NOTES.md, teammate-controller). Merging the two
+# would make a regenerated role.yaml look like the reconcilers had quietly
+# grown Lease and Event access. Two files, two privilege sets, both legible.
+#
+# Why leases and not configmaps: controller-runtime >= v0.12 uses the
+# coordination.k8s.io Lease lock by default; the configmap lock kubebuilder's
+# stock template still carries is dead weight here.
+#
+# Verbs are narrower than kubebuilder's stock template (which grants
+# list/watch/patch/delete too): client-go's leader elector only ever gets,
+# creates and updates its own Lease, and releases it on shutdown with an
+# update, never a delete.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8boss-operator-leader-election
+  namespace: k8boss-system
+  labels:
+    app.kubernetes.io/name: k8boss-operator
+    app.kubernetes.io/component: operator
+rules:
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - create
+      - update
+  # The elector emits Events on acquire/lose so an operator sees the handover
+  # in `kubectl describe`/`kubectl get events` rather than only in pod logs.
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch

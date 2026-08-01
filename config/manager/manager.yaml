@@ -1,0 +1,108 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8boss-system
+  labels:
+    app.kubernetes.io/name: k8boss-operator
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8boss-operator
+  namespace: k8boss-system
+  labels:
+    app.kubernetes.io/name: k8boss-operator
+    app.kubernetes.io/component: operator
+spec:
+  # One manager per cluster (ADR-0003: cluster identity is resolved once at
+  # startup). Leader election is enabled anyway — see --leader-elect below.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: k8boss-operator
+      app.kubernetes.io/component: operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: k8boss-operator
+        app.kubernetes.io/component: operator
+    spec:
+      serviceAccountName: k8boss-operator
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: ghcr.io/aesaganda/k8boss/k8boss-operator:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            # ON, even at replicas: 1. A single replica does not *need* a
+            # lease, but a rolling update overlaps old and new pods and an
+            # accidental `kubectl scale` adds a second one — either way two
+            # managers would reconcile the same CRs concurrently and
+            # double-write to the control-plane API. The lease costs one
+            # namespaced Role (config/rbac/leader_election_role.yaml); the
+            # failure it prevents is silent duplicate graph mutation.
+            - --leader-elect=true
+            - --health-probe-bind-address=:8081
+            # Loopback-only: nothing scrapes the operator yet, and metrics on
+            # the pod IP would be an unauthenticated surface nobody asked for.
+            # `kubectl port-forward` still reaches it. Change to :8080 (and add
+            # a Service) when there is a scraper.
+            - --metrics-bind-address=127.0.0.1:8080
+          env:
+            # REQUIRED, and deliberately blank here: this is the K8Boss cluster
+            # registration id, which differs per install. main.go exits
+            # non-zero on an empty/non-positive value rather than reconciling
+            # against cluster 0, so a forgotten override crash-loops loudly
+            # instead of writing edges to the wrong cluster.
+            - name: K8BOSS_CLUSTER_ID
+              value: ""
+            - name: K8BOSS_BACKEND_URL
+              value: http://k8boss-backend.k8boss-system.svc:8010
+            # Optional: the backend treats an empty OPERATOR_API_TOKEN as
+            # "no check" (cluster-internal Service networking). optional: true
+            # keeps the pod schedulable when no Secret exists.
+            - name: K8BOSS_OPERATOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: k8boss-operator
+                  key: token
+                  optional: true
+          ports:
+            - name: probes
+              containerPort: 8081
+              protocol: TCP
+          # Liveness is process-local (healthz.Ping) on purpose: an unreachable
+          # backend must fail READINESS, not restart the pod. Restarting a
+          # healthy operator because someone else is down fixes nothing.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probes
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          # Readiness carries the preflight checks (CRDs served + control-plane
+          # API reachable). Timeout is generous enough for one in-cluster HTTP
+          # round trip; period is slow enough not to hammer the backend.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: probes
+            initialDelaySeconds: 5
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

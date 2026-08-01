@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  # Generated from the +kubebuilder:rbac markers in internal/controller/*.go.
+  # Regenerate with `make manifests`; do not hand-edit.
+  - role.yaml
+  - role_binding.yaml
+  - service_account.yaml
+  # Manager-process privileges, kept separate from the marker-generated set.
+  - leader_election_role.yaml
+  - leader_election_role_binding.yaml

@@ -1,0 +1,19 @@
+# Binds the marker-generated CRD role (role.yaml) to the operator's
+# ServiceAccount. Cluster-wide because SegmentationPolicy and
+# RuntimeSecurityPolicy are watched in every namespace and PlatformConfig is
+# cluster-scoped — not because the operator needs anything outside k8boss.io.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8boss-operator
+  labels:
+    app.kubernetes.io/name: k8boss-operator
+    app.kubernetes.io/component: operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8boss-operator
+subjects:
+  - kind: ServiceAccount
+    name: k8boss-operator
+    namespace: k8boss-system
