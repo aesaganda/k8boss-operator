@@ -85,10 +85,10 @@ func TestPlatformConfig_KillSwitchWriteMustBeConfirmed(t *testing.T) {
 }
 
 // checked=false means "we could not determine this provider's health" and must
-// never render as healthy=false. The current type has no tri-state, so those
-// providers are OMITTED from status.providerHealth and named in a condition.
-// This test pins that behaviour — and documents the lossiness, since a consumer
-// reading only the list sees a shorter list, not an "unknown".
+// never render as health=False. ProviderHealthStatus.Health is tri-state, so
+// an undetermined provider gets a real entry carrying Health=Unknown plus a
+// Reason — present in the list, distinguishable from both healthy and
+// unhealthy, and never inferred from an absence.
 func TestPlatformConfig_UndeterminedProviderIsNotReportedUnhealthy(t *testing.T) {
 	name := applyPlatformConfig(t, false, v1alpha1.FlowProviderHubble)
 	stub := newBackendStub(t)
@@ -108,11 +108,22 @@ func TestPlatformConfig_UndeterminedProviderIsNotReportedUnhealthy(t *testing.T)
 	}
 	got := getPC(t, name)
 
-	for _, p := range got.Status.ProviderHealth {
-		if p.Name == "tetragon" {
-			t.Fatalf("an unchecked provider was written into status.providerHealth as healthy=%t "+
-				"— that is a health verdict the control plane never gave", p.Healthy)
+	var tetragon *v1alpha1.ProviderHealthStatus
+	for i := range got.Status.ProviderHealth {
+		if got.Status.ProviderHealth[i].Name == "tetragon" {
+			tetragon = &got.Status.ProviderHealth[i]
 		}
+	}
+	if tetragon == nil {
+		t.Fatal("the undetermined provider is missing from status.providerHealth entirely — " +
+			"a consumer would have to infer its existence from an absence")
+	}
+	if tetragon.Health != v1alpha1.ProviderHealthUnknown {
+		t.Fatalf("an unchecked provider was written into status.providerHealth as health=%q "+
+			"— that is a health verdict the control plane never gave", tetragon.Health)
+	}
+	if tetragon.Reason == "" {
+		t.Error("health=Unknown with no Reason: a non-True verdict with no evidence")
 	}
 	c := assertCondition(t, got.Status.Conditions, ConditionProviderHealthKnown,
 		metav1.ConditionFalse, ReasonHealthUndetermined)
@@ -149,8 +160,8 @@ func TestPlatformConfig_UnhealthyProviderCarriesAnExplanation(t *testing.T) {
 		t.Fatalf("providerHealth has %d entries, want 1", len(got.Status.ProviderHealth))
 	}
 	e := got.Status.ProviderHealth[0]
-	if e.Healthy {
-		t.Fatal("a healthy=false provider was recorded healthy")
+	if e.Health != v1alpha1.ProviderHealthFalse {
+		t.Fatalf("a healthy=false provider was recorded as health=%q", e.Health)
 	}
 	if e.LastQueryError == "" {
 		t.Error("an unhealthy provider has an empty lastQueryError, which reads as 'nothing went wrong'")
@@ -180,7 +191,8 @@ func TestPlatformConfig_HealthReadFailureDoesNotFabricateEntries(t *testing.T) {
 	}
 
 	got := getPC(t, name)
-	if len(got.Status.ProviderHealth) != 1 || !got.Status.ProviderHealth[0].Healthy {
+	if len(got.Status.ProviderHealth) != 1 ||
+		got.Status.ProviderHealth[0].Health != v1alpha1.ProviderHealthTrue {
 		t.Errorf("providerHealth was rewritten on a failed read: %+v", got.Status.ProviderHealth)
 	}
 	c := assertCondition(t, got.Status.Conditions, ConditionProviderHealthKnown,

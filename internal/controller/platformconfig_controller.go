@@ -78,29 +78,26 @@ func (r *PlatformConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				"determined: %s", pausedState.Paused, describeErr(err)))
 	}
 
-	determinate, undetermined := splitProviderHealth(health.Providers)
+	entries, undetermined := splitProviderHealth(health.Providers)
 
-	// Only providers with an actual verdict go into status.providerHealth.
-	//
-	// v1alpha1.ProviderHealthStatus has no tri-state field: its Healthy is a
-	// plain bool, so there is no truthful way to represent "we could not
-	// determine this" as a list entry — writing one would necessarily assert
-	// healthy=false. Rather than manufacture that assertion, undetermined
-	// providers are surfaced by name in the ProviderHealthKnown condition
-	// below. Flagged in NOTES.md as a gap in the type contract.
-	cr.Status.ProviderHealth = determinate
+	// Every provider the control plane reported gets an entry, including the
+	// ones whose health could not be determined — those carry
+	// Health=Unknown with a Reason. status.providerHealth is therefore a
+	// complete list, and a consumer never has to infer meaning from a
+	// provider's absence.
+	cr.Status.ProviderHealth = entries
 
 	if len(undetermined) > 0 {
 		setCondition(&cr.Status.Conditions, cr.Generation, ConditionProviderHealthKnown,
 			metav1.ConditionFalse, ReasonHealthUndetermined,
 			fmt.Sprintf("Health is UNKNOWN (not unhealthy) for %d provider(s): %s. These are "+
-				"absent from status.providerHealth rather than listed as unhealthy — K8Boss could "+
-				"not determine their health, which is a different answer from determining they are "+
-				"unhealthy.", len(undetermined), strings.Join(undetermined, "; ")))
+				"listed in status.providerHealth with health=Unknown, not as unhealthy — K8Boss "+
+				"could not determine their health, which is a different answer from determining "+
+				"they are unhealthy.", len(undetermined), strings.Join(undetermined, "; ")))
 	} else {
 		setCondition(&cr.Status.Conditions, cr.Generation, ConditionProviderHealthKnown,
 			metav1.ConditionTrue, ReasonHealthKnown,
-			fmt.Sprintf("Health was determined for all %d provider(s).", len(determinate)))
+			fmt.Sprintf("Health was determined for all %d provider(s).", len(entries)))
 	}
 
 	// 3. Ready reflects only what was actually confirmed: the kill switch
@@ -111,23 +108,24 @@ func (r *PlatformConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	setCondition(&cr.Status.Conditions, cr.Generation, ConditionReady,
 		metav1.ConditionTrue, ReasonReconciled,
 		fmt.Sprintf("Control plane confirmed the kill switch at paused=%t; provider health read "+
-			"returned %d determinate and %d undetermined provider(s).",
-			pausedState.Paused, len(determinate), len(undetermined)))
+			"returned %d provider(s), %d of them undetermined.",
+			pausedState.Paused, len(entries), len(undetermined)))
 
 	if err := r.Status().Update(ctx, &cr); err != nil {
 		return ctrl.Result{}, fmt.Errorf("updating status after successful reconcile: %w", err)
 	}
 	logger.Info("reconciled PlatformConfig", "paused", pausedState.Paused,
-		"determinateProviders", len(determinate), "undeterminedProviders", len(undetermined))
+		"providers", len(entries), "undeterminedProviders", len(undetermined))
 	return ctrl.Result{RequeueAfter: HealthPollInterval}, nil
 }
 
-// splitProviderHealth separates providers that came back with a real verdict
-// from those that did not. The second return is a list of human-readable
-// "name: why we could not tell" strings.
+// splitProviderHealth maps every reported provider to a status entry —
+// Health True/False for a real verdict, Unknown for one we could not
+// determine. The second return lists the undetermined ones as human-readable
+// "name: why we could not tell" strings, for the condition message.
 func splitProviderHealth(providers []backendclient.ProviderHealth) ([]v1alpha1.ProviderHealthStatus, []string) {
 	now := metav1.Now()
-	determinate := make([]v1alpha1.ProviderHealthStatus, 0, len(providers))
+	entries := make([]v1alpha1.ProviderHealthStatus, 0, len(providers))
 	var undetermined []string
 
 	for _, p := range providers {
@@ -141,13 +139,27 @@ func splitProviderHealth(providers []backendclient.ProviderHealth) ([]v1alpha1.P
 				}
 			}
 			undetermined = append(undetermined, fmt.Sprintf("%s: %s", p.Name, why))
+			// Still emit an entry. Omitting the provider would leave a consumer
+			// reading status.providerHealth with a shorter list and no way to
+			// tell a provider we could not reach from one that was never
+			// configured — the absence would read as "these are all of them".
+			// Health=Unknown says which question failed.
+			entries = append(entries, v1alpha1.ProviderHealthStatus{
+				Name:       p.Name,
+				Health:     v1alpha1.ProviderHealthUnknown,
+				Reason:     why,
+				ObservedAt: now,
+			})
 			continue
 		}
 
 		entry := v1alpha1.ProviderHealthStatus{
 			Name:       p.Name,
-			Healthy:    *p.Healthy,
+			Health:     v1alpha1.ProviderHealthFalse,
 			ObservedAt: now,
+		}
+		if *p.Healthy {
+			entry.Health = v1alpha1.ProviderHealthTrue
 		}
 		// LastQueryError may only be empty when the provider is healthy and a
 		// query actually succeeded (v1alpha1.ProviderHealthStatus's own
@@ -157,9 +169,9 @@ func splitProviderHealth(providers []backendclient.ProviderHealth) ([]v1alpha1.P
 		switch {
 		case p.LastQueryError != nil && *p.LastQueryError != "":
 			entry.LastQueryError = *p.LastQueryError
-		case !entry.Healthy && p.Message != "":
+		case entry.Health != v1alpha1.ProviderHealthTrue && p.Message != "":
 			entry.LastQueryError = p.Message
-		case !entry.Healthy:
+		case entry.Health != v1alpha1.ProviderHealthTrue:
 			entry.LastQueryError = "reported unhealthy; the control plane returned no query error " +
 				"and no message"
 		}
@@ -171,9 +183,9 @@ func splitProviderHealth(providers []backendclient.ProviderHealth) ([]v1alpha1.P
 				entry.LastQueryError += " (" + blockers + ")"
 			}
 		}
-		determinate = append(determinate, entry)
+		entries = append(entries, entry)
 	}
-	return determinate, undetermined
+	return entries, undetermined
 }
 
 // notReady records Ready=False and returns the error so the controller backs

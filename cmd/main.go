@@ -25,6 +25,7 @@ import (
 	"k8boss.io/operator/api/v1alpha1"
 	"k8boss.io/operator/internal/backendclient"
 	"k8boss.io/operator/internal/controller"
+	"k8boss.io/operator/internal/preflight"
 )
 
 var (
@@ -57,10 +58,13 @@ func main() {
 		"The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081",
 		"The address the probe endpoint binds to.")
-	// Off by default: leader election needs coordination.k8s.io Lease RBAC,
-	// which is outside the marker-generated role for this operator's own
-	// CRDs. Enable it together with the standard leader-election Role (see
-	// NOTES.md — flagged for teammate-rbac-preflight).
+	// Off by default because leader election needs coordination.k8s.io Lease
+	// RBAC beyond the marker-generated role. The shipped install turns it ON
+	// (--leader-elect=true in config/manager/manager.yaml, with
+	// config/rbac/leader_election_role.yaml): replicas:1 does not make a
+	// second manager impossible — a rolling update overlaps two pods by
+	// construction — and two managers double-writing to the control-plane API
+	// fails silently.
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election, ensuring only one active manager. Requires Lease RBAC.")
 	flag.StringVar(&backendURL, "backend-url", os.Getenv("K8BOSS_BACKEND_URL"),
@@ -92,10 +96,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	// The token is optional by design: the backend treats an empty
+	// The token is optional by design — the backend treats an empty
 	// OPERATOR_API_TOKEN as "no check", relying on cluster-internal Service
-	// networking (same trade-off as OTLP_INGEST_TOKEN).
-	backend := backendclient.New(backendURL, os.Getenv("K8BOSS_OPERATOR_TOKEN"))
+	// networking (same trade-off as OTLP_INGEST_TOKEN). But this surface
+	// mutates the Knowledge Graph and carries the kill switch, unlike the
+	// ingest-only OTLP receivers, so running without one is worth saying out
+	// loud rather than leaving to whoever reads the contract doc.
+	operatorToken := os.Getenv("K8BOSS_OPERATOR_TOKEN")
+	if operatorToken == "" {
+		setupLog.Info("WARNING: no K8BOSS_OPERATOR_TOKEN set — control-plane calls " +
+			"are unauthenticated. Anyone who can reach the backend Service can write " +
+			"graph edges and flip the kill switch. Set OPERATOR_API_TOKEN on the " +
+			"backend and K8BOSS_OPERATOR_TOKEN here before running unattended.")
+	}
+	backend := backendclient.New(backendURL, operatorToken)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
@@ -142,8 +156,19 @@ func main() {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
 	}
+	// Liveness stays Ping deliberately: an unreachable backend must fail
+	// readiness, not restart a healthy operator into a crash-loop over
+	// someone else's outage.
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
+		os.Exit(1)
+	}
+	// Ping alone answers "the process is up". Readiness has to mean "the CRDs
+	// are served and the control plane answers", or the Deployment reports
+	// Ready while every reconcile is failing.
+	if err := mgr.AddReadyzCheck("preflight",
+		preflight.New(mgr.GetConfig(), backend).Check); err != nil {
+		setupLog.Error(err, "unable to set up preflight ready check")
 		os.Exit(1)
 	}
 

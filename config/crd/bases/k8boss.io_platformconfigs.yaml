@@ -51,24 +51,6 @@ spec:
                 - Goldmane
                 - Mock
                 type: string
-              knowledgeGraphConnectionRef:
-                description: |-
-                  KnowledgeGraphConnectionRef points at the Secret holding the backend
-                  control-plane API connection the operator's reconcilers call. The
-                  operator never holds Postgres credentials and never writes to Postgres
-                  directly (ADR-0003) — every graph mutation goes through this API.
-                properties:
-                  name:
-                    default: ""
-                    description: |-
-                      Name of the referent.
-                      This field is effectively required, but due to backwards compatibility is
-                      allowed to be empty. Instances of this type with an empty value here are
-                      almost certainly wrong.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                    type: string
-                type: object
-                x-kubernetes-map-type: atomic
               paused:
                 default: true
                 description: |-
@@ -81,7 +63,6 @@ spec:
                 type: boolean
             required:
             - flowProvider
-            - knowledgeGraphConnectionRef
             - paused
             type: object
           status:
@@ -156,11 +137,23 @@ spec:
                     health_check()/last_query_error contract (docs/runbook-unverified-changes.md)
                     as a k8s status condition — it is a read-back of that contract, not a new one.
                   properties:
-                    healthy:
-                      type: boolean
+                    health:
+                      default: Unknown
+                      description: |-
+                        Health is tri-state on purpose. A plain bool cannot say "we could not
+                        look", which would force an undetermined provider to assert Unknown as
+                        False — the exact conflation this repo separates elsewhere as
+                        no_flow_observed vs no_flow_provider_available. Unknown is also the
+                        zero value, so a half-populated entry reads as "unknown", never as
+                        "healthy".
+                      enum:
+                      - Unknown
+                      - "True"
+                      - "False"
+                      type: string
                     lastQueryError:
                       description: |-
-                        LastQueryError is empty only when Healthy is true and a query has
+                        LastQueryError is empty only when Health is True and a query has
                         actually succeeded — never a default-empty value for "haven't checked
                         yet" (ADR-0003 / no-confident-conclusion-from-insufficient-evidence).
                       type: string
@@ -169,8 +162,14 @@ spec:
                     observedAt:
                       format: date-time
                       type: string
+                    reason:
+                      description: |-
+                        Reason explains a Health of Unknown or False: which query failed, or
+                        why the control plane could not be asked. Required for both — a
+                        non-True health with no reason is a verdict with no evidence.
+                      type: string
                   required:
-                  - healthy
+                  - health
                   - name
                   - observedAt
                   type: object

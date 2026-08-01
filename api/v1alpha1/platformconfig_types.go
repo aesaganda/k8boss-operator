@@ -1,7 +1,6 @@
 package v1alpha1
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -26,11 +25,13 @@ type PlatformConfigSpec struct {
 	// +kubebuilder:validation:Enum=RHNO;Hubble;Calico;Goldmane;Mock
 	FlowProvider FlowProviderKind `json:"flowProvider"`
 
-	// KnowledgeGraphConnectionRef points at the Secret holding the backend
-	// control-plane API connection the operator's reconcilers call. The
-	// operator never holds Postgres credentials and never writes to Postgres
-	// directly (ADR-0003) — every graph mutation goes through this API.
-	KnowledgeGraphConnectionRef corev1.LocalObjectReference `json:"knowledgeGraphConnectionRef"`
+	// Backend connection is deliberately NOT a field here. It arrives as env
+	// (K8BOSS_BACKEND_URL, K8BOSS_OPERATOR_TOKEN via secretKeyRef), which the
+	// kubelet resolves — so the operator needs no `get` on secrets at all.
+	// A Secret ref on this type would have required cluster-wide secret read
+	// (the ref could name any namespace) to service a field nothing reads.
+	// The operator still never holds Postgres credentials and never writes to
+	// Postgres directly (ADR-0003); every graph mutation goes through the API.
 
 	// Paused halts every reconciler this operator runs (SegmentationPolicy,
 	// RuntimeSecurityPolicy) without deleting or deregistering anything they
@@ -48,15 +49,40 @@ type PlatformConfigSpec struct {
 type ProviderHealthStatus struct {
 	Name string `json:"name"`
 
-	Healthy bool `json:"healthy"`
+	// Health is tri-state on purpose. A plain bool cannot say "we could not
+	// look", which would force an undetermined provider to assert Unknown as
+	// False — the exact conflation this repo separates elsewhere as
+	// no_flow_observed vs no_flow_provider_available. Unknown is also the
+	// zero value, so a half-populated entry reads as "unknown", never as
+	// "healthy".
+	// +kubebuilder:validation:Enum=Unknown;True;False
+	// +kubebuilder:default=Unknown
+	Health ProviderHealth `json:"health"`
 
-	// LastQueryError is empty only when Healthy is true and a query has
+	// LastQueryError is empty only when Health is True and a query has
 	// actually succeeded — never a default-empty value for "haven't checked
 	// yet" (ADR-0003 / no-confident-conclusion-from-insufficient-evidence).
 	LastQueryError string `json:"lastQueryError,omitempty"`
 
+	// Reason explains a Health of Unknown or False: which query failed, or
+	// why the control plane could not be asked. Required for both — a
+	// non-True health with no reason is a verdict with no evidence.
+	Reason string `json:"reason,omitempty"`
+
 	ObservedAt metav1.Time `json:"observedAt"`
 }
+
+// ProviderHealth is a three-valued health verdict: whether a provider is
+// healthy, unhealthy, or could not be determined.
+type ProviderHealth string
+
+const (
+	// ProviderHealthUnknown means K8Boss could not determine this provider's
+	// health — NOT that the provider is unhealthy. Zero value by design.
+	ProviderHealthUnknown ProviderHealth = "Unknown"
+	ProviderHealthTrue    ProviderHealth = "True"
+	ProviderHealthFalse   ProviderHealth = "False"
+)
 
 type PlatformConfigStatus struct {
 	// Conditions surfaces reconcile outcome, e.g. Type=Ready, Type=Paused.
