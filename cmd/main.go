@@ -49,6 +49,7 @@ func main() {
 		metricsAddr          string
 		probeAddr            string
 		enableLeaderElection bool
+		leaderElectionNS     string
 		backendURL           string
 		clusterIDFlag        string
 		platformConfigName   string
@@ -67,6 +68,16 @@ func main() {
 	// fails silently.
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election, ensuring only one active manager. Requires Lease RBAC.")
+	// Empty keeps controller-runtime's in-cluster detection (it reads the
+	// ServiceAccount's namespace file), which is what the shipped Deployment
+	// relies on. That detection has no out-of-cluster equivalent, so running
+	// locally with --leader-elect=true failed outright with "unable to find
+	// leader election namespace" — a manager that could not start at all in
+	// the one setup where you would test failover by hand.
+	flag.StringVar(&leaderElectionNS, "leader-election-namespace", os.Getenv("K8BOSS_LEADER_ELECTION_NAMESPACE"),
+		"Namespace holding the leader-election Lease. Empty = detect from the in-cluster "+
+			"ServiceAccount; set it to run with --leader-elect outside a cluster "+
+			"(env: K8BOSS_LEADER_ELECTION_NAMESPACE).")
 	flag.StringVar(&backendURL, "backend-url", os.Getenv("K8BOSS_BACKEND_URL"),
 		"Base URL of the K8Boss backend control-plane API (env: K8BOSS_BACKEND_URL).")
 	flag.StringVar(&clusterIDFlag, "cluster-id", os.Getenv("K8BOSS_CLUSTER_ID"),
@@ -113,11 +124,12 @@ func main() {
 	backend := backendclient.New(backendURL, operatorToken)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "k8boss-operator.k8boss.io",
+		Scheme:                  scheme,
+		Metrics:                 metricsserver.Options{BindAddress: metricsAddr},
+		HealthProbeBindAddress:  probeAddr,
+		LeaderElection:          enableLeaderElection,
+		LeaderElectionID:        "k8boss-operator.k8boss.io",
+		LeaderElectionNamespace: leaderElectionNS,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
