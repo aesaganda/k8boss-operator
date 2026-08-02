@@ -96,18 +96,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	// The token is optional by design — the backend treats an empty
-	// OPERATOR_API_TOKEN as "no check", relying on cluster-internal Service
-	// networking (same trade-off as OTLP_INGEST_TOKEN). But this surface
-	// mutates the Knowledge Graph and carries the kill switch, unlike the
-	// ingest-only OTLP receivers, so running without one is worth saying out
-	// loud rather than leaving to whoever reads the contract doc.
+	// Required, for the same reason as the two above: it is this pod's own
+	// config, not someone else's outage. The backend now fails closed on an
+	// unset OPERATOR_API_TOKEN (503, code operator_token_not_configured)
+	// because that surface writes graph edges and holds the kill switch — so
+	// starting without a token buys nothing but a reconciler that 503s on
+	// every call while readiness quietly reports the backend at fault.
+	// Crash-looping with this message names the actual problem.
 	operatorToken := os.Getenv("K8BOSS_OPERATOR_TOKEN")
 	if operatorToken == "" {
-		setupLog.Info("WARNING: no K8BOSS_OPERATOR_TOKEN set — control-plane calls " +
-			"are unauthenticated. Anyone who can reach the backend Service can write " +
-			"graph edges and flip the kill switch. Set OPERATOR_API_TOKEN on the " +
-			"backend and K8BOSS_OPERATOR_TOKEN here before running unattended.")
+		setupLog.Error(nil, "K8BOSS_OPERATOR_TOKEN is required; the backend's operator "+
+			"control-plane API does not run unauthenticated. Set OPERATOR_API_TOKEN on the "+
+			"backend and put the same value in the k8boss-operator Secret (key: token).")
+		os.Exit(1)
 	}
 	backend := backendclient.New(backendURL, operatorToken)
 

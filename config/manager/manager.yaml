@@ -62,9 +62,13 @@ spec:
               value: ""
             - name: K8BOSS_BACKEND_URL
               value: http://k8boss-backend.k8boss-system.svc:8010
-            # Optional: the backend treats an empty OPERATOR_API_TOKEN as
-            # "no check" (cluster-internal Service networking). optional: true
-            # keeps the pod schedulable when no Secret exists.
+            # REQUIRED. The backend fails closed on an unset
+            # OPERATOR_API_TOKEN (503) — that API writes graph edges and holds
+            # the kill switch, so it does not run unauthenticated. main.go
+            # exits non-zero on an empty value, same as K8BOSS_CLUSTER_ID.
+            # `optional: true` stays: without it a missing Secret is a
+            # scheduling failure with an obscure message, where a crash-loop
+            # logs exactly which env var to set.
             - name: K8BOSS_OPERATOR_TOKEN
               valueFrom:
                 secretKeyRef:
