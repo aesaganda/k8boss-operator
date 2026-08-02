@@ -63,8 +63,9 @@ func TestSegmentation_HappyPath_ReadyOnlyAfterConfirmedWrite(t *testing.T) {
 			got.Status.ObservedGeneration, got.Generation)
 	}
 	// Resolved from PlatformConfig, since spec.providerRef is empty.
-	if got.Status.EnforcedProvider != string(v1alpha1.FlowProviderHubble) {
-		t.Errorf("enforcedProvider = %q, want %q", got.Status.EnforcedProvider, v1alpha1.FlowProviderHubble)
+	if got.Status.ResolvedFlowProvider != string(v1alpha1.FlowProviderHubble) {
+		t.Errorf("resolvedFlowProvider = %q, want %q",
+			got.Status.ResolvedFlowProvider, v1alpha1.FlowProviderHubble)
 	}
 	if !controllerutil.ContainsFinalizer(got, CREdgesFinalizer) {
 		t.Error("finalizer was not added before the first mutating call — a CR could hold graph " +
@@ -90,8 +91,9 @@ func TestSegmentation_SpecProviderRefWinsOverClusterDefault(t *testing.T) {
 	if _, err := segReconciler(stub, pc).Reconcile(testCtx, req(ns, "override")); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if got := getSeg(t, ns, "override"); got.Status.EnforcedProvider != "Calico" {
-		t.Errorf("enforcedProvider = %q, want the spec override %q", got.Status.EnforcedProvider, "Calico")
+	if got := getSeg(t, ns, "override"); got.Status.ResolvedFlowProvider != "Calico" {
+		t.Errorf("resolvedFlowProvider = %q, want the spec override %q",
+			got.Status.ResolvedFlowProvider, "Calico")
 	}
 }
 
@@ -132,9 +134,9 @@ func TestSegmentation_InconsistentOKBodyIsNotReady(t *testing.T) {
 				t.Errorf("observedGeneration advanced to %d on an unconfirmed write",
 					got.Status.ObservedGeneration)
 			}
-			if got.Status.EnforcedProvider != "" {
-				t.Errorf("enforcedProvider = %q was set from an unconfirmed response",
-					got.Status.EnforcedProvider)
+			if got.Status.ResolvedFlowProvider != "" {
+				t.Errorf("resolvedFlowProvider = %q was set from an unconfirmed response",
+					got.Status.ResolvedFlowProvider)
 			}
 		})
 	}

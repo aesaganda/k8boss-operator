@@ -90,17 +90,17 @@ func (r *SegmentationPolicyReconciler) Reconcile(ctx context.Context, req ctrl.R
 			0)
 	}
 
-	// EnforcedProvider is the provider that actually governs this policy:
-	// spec.providerRef when set, otherwise the cluster default read from
-	// PlatformConfig. The reconcile response carries no provider field — see
-	// NOTES.md, flagged as an open contract gap rather than guessed at
-	// silently. It is set only on this confirmed-success path.
+	// Which FlowProvider this reconcile ran under — spec.providerRef when set,
+	// otherwise the cluster default read from PlatformConfig just above. This
+	// is resolved intent, and the field name now says so: nothing in the
+	// reconcile response confirms enforcement, and a FlowProvider would not be
+	// the thing doing it anyway. Set only on this confirmed-success path.
 	provider := cr.Spec.ProviderRef
 	if provider == "" {
 		provider = gate.FlowProvider
 	}
 
-	cr.Status.EnforcedProvider = provider
+	cr.Status.ResolvedFlowProvider = provider
 	cr.Status.ObservedGeneration = cr.Generation
 	setCondition(&cr.Status.Conditions, cr.Generation, ConditionReady,
 		metav1.ConditionTrue, ReasonReconciled,
@@ -132,18 +132,21 @@ func inconsistentSegmentationResult(res *backendclient.ReconcileResult) string {
 	return ""
 }
 
-// segmentationReadyMessage describes a confirmed reconcile. A zero match is
-// stated as a *confirmed* zero: the control plane returned 200, which means it
-// successfully enumerated the namespace and found nothing matching — unlike a
-// failure path, where the count is unknown rather than zero.
+// segmentationReadyMessage describes a confirmed reconcile. What is confirmed
+// is the *graph write*, not that anything enforces the policy — "confirmed the
+// policy" read as the latter. A zero match is stated as a *confirmed* zero: the
+// control plane returned 200, which means it successfully enumerated the
+// namespace and found nothing matching — unlike a failure path, where the count
+// is unknown rather than zero.
 func segmentationReadyMessage(result *backendclient.ReconcileResult) string {
 	if result.MatchedWorkloads == 0 {
-		return fmt.Sprintf("Control plane confirmed the policy, and confirmed that NO workload in "+
-			"this namespace matches spec.selector (a checked zero, not an unchecked one): "+
-			"0 edge(s) upserted, %d edge(s) closed.", result.EdgesClosed)
+		return fmt.Sprintf("Control plane recorded this policy's intent in the Knowledge Graph, "+
+			"and confirmed that NO workload in this namespace matches spec.selector (a checked "+
+			"zero, not an unchecked one): 0 edge(s) upserted, %d edge(s) closed.",
+			result.EdgesClosed)
 	}
-	return fmt.Sprintf("Control plane confirmed the policy: %d workload(s) matched, "+
-		"%d edge(s) upserted, %d edge(s) closed.",
+	return fmt.Sprintf("Control plane recorded this policy's intent in the Knowledge Graph: "+
+		"%d workload(s) matched, %d edge(s) upserted, %d edge(s) closed.",
 		result.MatchedWorkloads, result.EdgesUpserted, result.EdgesClosed)
 }
 

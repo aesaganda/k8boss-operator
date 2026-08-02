@@ -41,11 +41,22 @@ type SegmentationPolicyStatus struct {
 
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// EnforcedProvider is set only once the backend control-plane API
-	// confirms the enforcement path actually applied this policy — never
-	// speculatively set to the requested provider before confirmation
-	// (ADR-0003: no Ready=true on unconfirmed state).
-	EnforcedProvider string `json:"enforcedProvider,omitempty"`
+	// ResolvedFlowProvider records which FlowProvider this policy was
+	// reconciled under: spec.providerRef when set, otherwise the cluster
+	// default read from PlatformConfig at reconcile time. That last part is
+	// why it is worth a status field at all rather than being derivable from
+	// the spec — editing PlatformConfig later does not rewrite it, so it says
+	// what was in effect for THIS reconcile.
+	//
+	// It is NOT a claim that anything is enforcing this policy. A FlowProvider
+	// is flow *telemetry* (Hubble/Calico/RHNO); enforcement is the CNI's job
+	// and K8Boss does not observe it. This field was called `enforcedProvider`
+	// and did read as that claim — see NOTES.md for what real enforcement
+	// confirmation would require.
+	//
+	// Set only on the confirmed-success path, so an unverified write leaves it
+	// empty rather than stamping intent (ADR-0003).
+	ResolvedFlowProvider string `json:"resolvedFlowProvider,omitempty"`
 }
 
 // +kubebuilder:object:root=true
