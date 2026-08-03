@@ -4,4 +4,4 @@ resources:
 - manager.yaml
 images:
 - name: ghcr.io/aesaganda/k8boss/k8boss-operator
-  newTag: main-3a0b39b
+  newTag: main-3837726
