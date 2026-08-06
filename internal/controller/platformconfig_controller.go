@@ -8,8 +8,10 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"k8boss.io/operator/api/v1alpha1"
 	"k8boss.io/operator/internal/backendclient"
@@ -30,6 +32,16 @@ type PlatformConfigReconciler struct {
 
 	// ClusterID identifies this cluster to the control-plane API.
 	ClusterID int
+
+	// PlatformConfigName is the singleton this operator answers to — the same
+	// name the SegmentationPolicy and RuntimeSecurityPolicy reconcilers consult
+	// through checkPauseGate. Without it this controller reconciled EVERY
+	// PlatformConfig object regardless of name and pushed each one's
+	// spec.paused to the cluster-wide server-side kill switch, while the pause
+	// gate those other controllers read only ever looks at the singleton. So a
+	// second CR named anything at all could unpause the control-plane API for
+	// the whole cluster, and the operator's own gate would never notice.
+	PlatformConfigName string
 }
 
 // +kubebuilder:rbac:groups=k8boss.io,resources=platformconfigs,verbs=get;list;watch;update
@@ -41,6 +53,18 @@ func (r *PlatformConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	var cr v1alpha1.PlatformConfig
 	if err := r.Get(ctx, req.NamespacedName, &cr); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// 0. Only the singleton drives anything.
+	//
+	// Rejected here rather than as a watch predicate on purpose: a predicate
+	// drops the object silently, leaving a second CR sitting in the cluster with
+	// empty status and no explanation, looking like the operator is broken. This
+	// way the object says, on itself, that it governs nothing.
+	if r.PlatformConfigName != "" && cr.Name != r.PlatformConfigName {
+		logger.Info("ignoring non-singleton PlatformConfig",
+			"name", cr.Name, "singleton", r.PlatformConfigName)
+		return ctrl.Result{}, r.setNotSingleton(ctx, &cr)
 	}
 
 	// 1. Push the kill switch. This endpoint is never itself gated by the
@@ -201,6 +225,25 @@ func (r *PlatformConfigReconciler) notReady(ctx context.Context, cr *v1alpha1.Pl
 	return ctrl.Result{}, fmt.Errorf("%s: %s", reason, message)
 }
 
+// setNotSingleton records, on the object itself, that it drives nothing —
+// distinct from notReady(), which returns an error to trigger controller
+// backoff. There is nothing to retry here: the verdict cannot change without a
+// human renaming the object.
+func (r *PlatformConfigReconciler) setNotSingleton(ctx context.Context,
+	cr *v1alpha1.PlatformConfig) error {
+
+	setCondition(&cr.Status.Conditions, cr.Generation, ConditionReady,
+		metav1.ConditionFalse, ReasonNotSingleton,
+		fmt.Sprintf("This PlatformConfig is named %q, but this operator answers only to %q. "+
+			"It governs nothing: its spec.paused is NOT pushed to the control-plane kill switch "+
+			"and its providers are not evaluated. Rename it or delete it.",
+			cr.Name, r.PlatformConfigName))
+	if err := r.Status().Update(ctx, cr); err != nil {
+		return fmt.Errorf("updating status (%s): %w", ReasonNotSingleton, err)
+	}
+	return nil
+}
+
 func pauseErrorReason(err error) string {
 	var apiErr *backendclient.APIError
 	if errors.As(err, &apiErr) {
@@ -231,7 +274,21 @@ func describeErr(err error) string {
 // SetupWithManager registers this reconciler with the manager.
 func (r *PlatformConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1alpha1.PlatformConfig{}).
+		// GenerationChangedPredicate breaks a self-driving loop. Reconcile
+		// rewrites status on every pass (including a fresh lastChecked
+		// timestamp), and this controller watches its own object — so each write
+		// re-enqueued the object, which reconciled, which wrote status again.
+		// The result was a continuous spin against the control-plane API's
+		// /paused and /provider-health endpoints, at whatever rate the work
+		// queue allowed rather than the HealthPollInterval it was meant to run
+		// at.
+		//
+		// Safe because status-subresource writes do not bump
+		// metadata.generation, so only real spec edits re-trigger — and Create
+		// and Delete still pass the predicate. Periodic health polling is
+		// unaffected: it comes from ctrl.Result{RequeueAfter: HealthPollInterval}
+		// in Reconcile, not from this watch.
+		For(&v1alpha1.PlatformConfig{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("platformconfig").
 		Complete(r)
 }

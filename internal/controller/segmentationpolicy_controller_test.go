@@ -271,3 +271,74 @@ func TestPlatformConfig_PausedDefaultsTrueAtTheAPIServer(t *testing.T) {
 			"operator installed with a minimal PlatformConfig starts mutating the graph immediately")
 	}
 }
+
+// A CR that only ever reconciled while paused has provably NO graph edges: the
+// gate returns before ReconcileSegmentationPolicy is ever called. It must
+// therefore be deletable.
+//
+// It was not. The finalizer was attached ABOVE the pause gate, so the paused CR
+// carried one; deleting it ran finalize(), which calls CloseCREdges, is told the
+// control plane is paused, and deliberately holds the finalizer ("Deletion is
+// blocked ... until it resumes"). The object stayed in Terminating with nothing
+// to clean up, and a namespace containing one could not be deleted either.
+//
+// spec.paused defaults to TRUE (see TestPlatformConfig_PausedDefaultsTrueAtThe-
+// APIServer), so this was the out-of-the-box path, not a corner case.
+func TestSegmentation_PausedCRHasNoFinalizerAndStaysDeletable(t *testing.T) {
+	ns := newNamespace(t)
+	pc := applyPlatformConfig(t, true, v1alpha1.FlowProviderHubble)
+
+	stub := newBackendStub(t)
+	newSegPolicy(t, ns, "p", v1alpha1.SegmentationPolicySpec{})
+
+	if _, err := segReconciler(stub, pc).Reconcile(testCtx, req(ns, "p")); err != nil {
+		t.Fatalf("paused reconcile returned an error: %v", err)
+	}
+	stub.assertNotCalled(pathSegReconcile)
+
+	got := getSeg(t, ns, "p")
+	if controllerutil.ContainsFinalizer(got, CREdgesFinalizer) {
+		t.Fatalf("a CR reconciled only while paused carries %q, but it has no edges to close — "+
+			"deleting it deadlocks in Terminating because finalize() holds the finalizer while "+
+			"the control plane reports paused", CREdgesFinalizer)
+	}
+
+	// And it really does go away, rather than hanging on a held finalizer.
+	if err := k8sC.Delete(testCtx, got); err != nil {
+		t.Fatalf("deleting the paused CR: %v", err)
+	}
+	if _, err := segReconciler(stub, pc).Reconcile(testCtx, req(ns, "p")); err != nil {
+		t.Fatalf("reconcile after delete returned an error: %v", err)
+	}
+	var after v1alpha1.SegmentationPolicy
+	err := k8sC.Get(testCtx, client.ObjectKey{Namespace: ns, Name: "p"}, &after)
+	if err == nil && !after.DeletionTimestamp.IsZero() &&
+		controllerutil.ContainsFinalizer(&after, CREdgesFinalizer) {
+		t.Fatal("paused CR is stuck in Terminating on a held finalizer")
+	}
+}
+
+// The counterpart: once NOT paused, the finalizer must still be attached before
+// the backend is called, or a successful reconcile could create edges with
+// nothing guaranteeing they get closed. Moving the gate above the finalizer must
+// not have cost that ordering.
+func TestSegmentation_UnpausedCRGetsFinalizerBeforeTheBackendCall(t *testing.T) {
+	ns := newNamespace(t)
+	pc := applyPlatformConfig(t, false, v1alpha1.FlowProviderHubble)
+
+	stub := newBackendStub(t)
+	stub.on(pathSegReconcile, okBody(map[string]any{
+		"status": "ok", "edges_upserted": 1, "edges_closed": 0,
+		"edge_keys": []string{"a"}, "matched_workloads": 1,
+		"unverified_edge_keys": []string{},
+	}))
+	newSegPolicy(t, ns, "p", v1alpha1.SegmentationPolicySpec{})
+
+	if _, err := segReconciler(stub, pc).Reconcile(testCtx, req(ns, "p")); err != nil {
+		t.Fatalf("reconcile returned an error: %v", err)
+	}
+	if !controllerutil.ContainsFinalizer(getSeg(t, ns, "p"), CREdgesFinalizer) {
+		t.Fatalf("an unpaused CR must carry %q once the backend has been called, "+
+			"or its edges can be orphaned", CREdgesFinalizer)
+	}
+}

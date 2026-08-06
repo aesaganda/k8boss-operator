@@ -160,6 +160,11 @@ func main() {
 		Client:    mgr.GetClient(),
 		Backend:   backend,
 		ClusterID: clusterID,
+		// Same singleton the other two reconcilers gate on. Without it this
+		// controller pushed EVERY PlatformConfig's spec.paused to the
+		// cluster-wide kill switch, so a second CR of any name could unpause
+		// the control plane behind the operator's own gate.
+		PlatformConfigName: platformConfigName,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PlatformConfig")
 		os.Exit(1)

@@ -65,16 +65,23 @@ func (r *RuntimeSecurityPolicyReconciler) Reconcile(ctx context.Context, req ctr
 		return r.finalize(ctx, &cr)
 	}
 
+	// Pause gate FIRST, finalizer after — see the long note in
+	// segmentationpolicy_controller.go. Attaching the finalizer above the gate
+	// deadlocked deletion for any CR reconciled while paused: it had no edges
+	// (the backend was never called) but finalize() holds the finalizer when
+	// CloseCREdges reports paused, leaving the object in Terminating forever.
+	// The finalizer still precedes the first mutating call, because the gate
+	// returns without one.
+	if gate := checkPauseGate(ctx, r.Client, r.PlatformConfigName); gate.Paused {
+		logger.Info("skipping reconcile: paused", "reason", gate.Reason)
+		return r.notReady(ctx, &cr, gate.Reason, gate.Message, PausedRequeue)
+	}
+
 	if !controllerutil.ContainsFinalizer(&cr, CREdgesFinalizer) {
 		controllerutil.AddFinalizer(&cr, CREdgesFinalizer)
 		if err := r.Update(ctx, &cr); err != nil {
 			return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
 		}
-	}
-
-	if gate := checkPauseGate(ctx, r.Client, r.PlatformConfigName); gate.Paused {
-		logger.Info("skipping reconcile: paused", "reason", gate.Reason)
-		return r.notReady(ctx, &cr, gate.Reason, gate.Message, PausedRequeue)
 	}
 
 	result, err := r.Backend.ReconcileRuntimeSecurityPolicy(ctx, r.ClusterID,

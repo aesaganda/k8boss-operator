@@ -59,6 +59,10 @@ const (
 	ReasonCloseFailed              = "EdgeCloseFailed"
 	ReasonHealthUndetermined       = "ProviderHealthUndetermined"
 	ReasonHealthKnown              = "ProviderHealthDetermined"
+	// ReasonNotSingleton marks a PlatformConfig whose name is not the one this
+	// operator answers to. Such an object governs nothing, and says so on
+	// itself rather than being silently ignored.
+	ReasonNotSingleton = "NotTheConfiguredSingleton"
 )
 
 // Requeue cadences.

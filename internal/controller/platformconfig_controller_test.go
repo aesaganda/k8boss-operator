@@ -247,3 +247,65 @@ func TestPlatformConfig_PushesSpecPausedOnEveryReconcile(t *testing.T) {
 			"source of truth for the flag on every pass", n)
 	}
 }
+
+// Only the configured singleton may drive the cluster-wide kill switch.
+//
+// SetupWithManager watches PlatformConfig with no name filter, and the
+// reconciler did not know which name it answered to — so ANY PlatformConfig,
+// whatever its name, had its spec.paused pushed to the control-plane API by
+// `SetPaused`. Meanwhile checkPauseGate (which the SegmentationPolicy and
+// RuntimeSecurityPolicy controllers read) only ever consults the singleton. A
+// second CR could therefore unpause the control plane for the whole cluster
+// while the operator's own gate still reported paused.
+func TestPlatformConfig_NonSingletonDrivesNothing(t *testing.T) {
+	stub := newBackendStub(t)
+	name := applyPlatformConfig(t, false, v1alpha1.FlowProviderHubble)
+
+	r := pcReconciler(stub)
+	r.PlatformConfigName = "the-real-one" // deliberately NOT `name`
+
+	if _, err := r.Reconcile(testCtx, req("", name)); err != nil {
+		t.Fatalf("a non-singleton must be ignored quietly, not error: %v", err)
+	}
+
+	// The kill switch must not have been touched at all.
+	stub.assertNotCalled(pathPaused)
+
+	// ...and the object must say why it does nothing, rather than sitting
+	// there with empty status looking like a broken operator.
+	got := getPC(t, name)
+	assertCondition(t, got.Status.Conditions, ConditionReady,
+		metav1.ConditionFalse, ReasonNotSingleton)
+	var msg string
+	for _, c := range got.Status.Conditions {
+		if c.Type == ConditionReady {
+			msg = c.Message
+		}
+	}
+	if !strings.Contains(msg, "the-real-one") {
+		t.Errorf("the message must name the singleton it expected, got %q", msg)
+	}
+}
+
+// Counterpart: the real singleton still drives the switch.
+func TestPlatformConfig_SingletonStillDrivesTheKillSwitch(t *testing.T) {
+	stub := newBackendStub(t)
+	name := applyPlatformConfig(t, true, v1alpha1.FlowProviderHubble)
+	stub.on(pathPaused, pausedBody(true))
+	stub.on(pathProviderHealth, okBody(map[string]any{
+		"cluster_id": 1,
+		"providers": []map[string]any{
+			{"name": "hubble", "checked": true, "healthy": true, "message": "ok",
+				"last_query_error": nil},
+		},
+	}))
+
+	r := pcReconciler(stub)
+	r.PlatformConfigName = name
+
+	if _, err := r.Reconcile(testCtx, req("", name)); err != nil {
+		t.Fatalf("the singleton must still reconcile: %v", err)
+	}
+	// Reaching a clean Reconcile at all proves SetPaused was called: the stub
+	// errors on an unqueued call, so a clean Reconcile is the assertion.
+}

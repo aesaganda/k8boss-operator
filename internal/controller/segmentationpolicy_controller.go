@@ -60,19 +60,32 @@ func (r *SegmentationPolicyReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return r.finalize(ctx, &cr)
 	}
 
-	// Add the finalizer before the first mutating call, so a CR can never
-	// have graph edges without something guaranteeing they get closed.
+	// The pause gate comes FIRST, and the finalizer only after it.
+	//
+	// The finalizer still lands before the first mutating call — the gate below
+	// returns without calling the backend — so the invariant it exists for ("a
+	// CR can never have graph edges without something guaranteeing they get
+	// closed") holds exactly as before.
+	//
+	// Attaching it above the gate instead was a deadlock: a CR reconciled while
+	// paused got the finalizer but never reached ReconcileSegmentationPolicy, so
+	// it provably had NO edges. Deleting it then ran finalize(), which calls
+	// CloseCREdges, gets a paused error back, and deliberately holds the
+	// finalizer ("Deletion is blocked ... until it resumes"). The object sat in
+	// Terminating forever with nothing to clean up, and a namespace containing
+	// one could not be deleted either. PlatformConfig.spec.paused DEFAULTS TO
+	// TRUE, so that was the out-of-the-box path, not an edge case.
+	gate := checkPauseGate(ctx, r.Client, r.PlatformConfigName)
+	if gate.Paused {
+		logger.Info("skipping reconcile: paused", "reason", gate.Reason)
+		return r.notReady(ctx, &cr, gate.Reason, gate.Message, PausedRequeue)
+	}
+
 	if !controllerutil.ContainsFinalizer(&cr, CREdgesFinalizer) {
 		controllerutil.AddFinalizer(&cr, CREdgesFinalizer)
 		if err := r.Update(ctx, &cr); err != nil {
 			return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
 		}
-	}
-
-	gate := checkPauseGate(ctx, r.Client, r.PlatformConfigName)
-	if gate.Paused {
-		logger.Info("skipping reconcile: paused", "reason", gate.Reason)
-		return r.notReady(ctx, &cr, gate.Reason, gate.Message, PausedRequeue)
 	}
 
 	result, err := r.Backend.ReconcileSegmentationPolicy(ctx, r.ClusterID,
