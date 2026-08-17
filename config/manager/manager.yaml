@@ -1,10 +1,4 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: k8boss-system
-  labels:
-    app.kubernetes.io/name: k8boss-operator
----
+# The Namespace deliberately is NOT here — see config/default/namespace.yaml.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

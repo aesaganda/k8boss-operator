@@ -1,0 +1,45 @@
+# Kubebuilder project descriptor. Not used by `go build` or by any of the
+# config/ install paths — it exists so `operator-sdk generate kustomize
+# manifests` and `operator-sdk generate bundle` know which API types this
+# module owns when they build the ClusterServiceVersion for OLM/OperatorHub.
+#
+# The tree was hand-scaffolded (ADR-0003 §1: neither kubebuilder nor
+# controller-gen was available when it was written), so this file was written
+# to match the tree rather than the tree being generated from it. Keep the
+# three `resources:` entries in step with api/v1alpha1/*_types.go — an
+# out-of-date entry silently drops a CRD from the generated CSV's
+# `owned` list, which reads as "the operator does not manage that kind".
+#
+# domain with no per-resource `group:` yields the group `k8boss.io`, matching
+# +groupName=k8boss.io in api/v1alpha1/groupversion_info.go.
+domain: k8boss.io
+layout:
+- go.kubebuilder.io/v4
+projectName: k8boss-operator
+repo: k8boss.io/operator
+resources:
+- api:
+    crdVersion: v1
+    namespaced: false
+  controller: true
+  domain: k8boss.io
+  kind: PlatformConfig
+  path: k8boss.io/operator/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: k8boss.io
+  kind: SegmentationPolicy
+  path: k8boss.io/operator/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: k8boss.io
+  kind: RuntimeSecurityPolicy
+  path: k8boss.io/operator/api/v1alpha1
+  version: v1alpha1
+version: "3"

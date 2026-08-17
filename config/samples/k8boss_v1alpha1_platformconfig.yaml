@@ -1,0 +1,16 @@
+apiVersion: k8boss.io/v1alpha1
+kind: PlatformConfig
+metadata:
+  # MUST be "default". cmd/main.go defaults --platformconfig-name to "default"
+  # and all three reconcilers gate on that one name; a PlatformConfig under any
+  # other name governs nothing and reports NotSingleton.
+  name: default
+spec:
+  flowProvider: Hubble
+  # The schema default is TRUE (platformconfig_types.go) so that an operator
+  # with no PlatformConfig applied cannot silently start mutating state. That
+  # makes `false` load-bearing HERE: this file becomes the OLM alm-examples
+  # entry, and a user who clicks "Create" on a paused example gets every
+  # SegmentationPolicy sitting at Ready=False/reason=Paused — an install that
+  # looks broken. Creating this CR is the deliberate act that unpauses.
+  paused: false

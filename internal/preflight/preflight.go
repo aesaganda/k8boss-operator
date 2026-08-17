@@ -176,6 +176,21 @@ func (c *Checker) checkBackend(ctx context.Context) error {
 			"no backend client was provided to the preflight checker")
 	}
 	if _, err := c.Backend.GetPaused(ctx); err != nil {
+		// "Nobody has told us where the backend is" is not a probe failure.
+		// There is no outage to report and no request was attempted; the
+		// operator is up, idle, and already saying so on every CR it owns
+		// (ReasonAwaitingConfiguration). Failing readiness here would restate
+		// a configuration gap as someone else's downtime — and, under OLM,
+		// would hold the ClusterServiceVersion out of Succeeded forever for a
+		// deployment that is behaving exactly as designed.
+		//
+		// This is the one and only degrade-to-ready path, and it is narrow on
+		// purpose: it fires only for a client that was built with no
+		// connection settings at all. A CONFIGURED backend that cannot be
+		// reached still fails readiness loudly, per the package doc above.
+		if backendclient.IsUnconfigured(err) {
+			return nil
+		}
 		return fmt.Errorf("the control-plane API is NOT confirmed reachable, so no reconcile "+
 			"could reach the Knowledge Graph: GET /internal/operator/v1/paused failed: %w", err)
 	}

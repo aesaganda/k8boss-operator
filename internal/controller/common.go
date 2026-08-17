@@ -53,6 +53,12 @@ const (
 	ReasonPlatformConfigMissing    = "PlatformConfigMissing"
 	ReasonPlatformConfigUnreadable = "PlatformConfigUnreadable"
 	ReasonBackendUnreachable       = "BackendUnreachable"
+	// ReasonAwaitingConfiguration means no control-plane connection was ever
+	// configured, so no call was attempted. Kept strictly separate from
+	// ReasonBackendUnreachable: one says "we could not reach the backend", the
+	// other says "nobody has told us where it is". Reporting the second as the
+	// first would blame an outage on a backend that may be perfectly healthy.
+	ReasonAwaitingConfiguration = "AwaitingConfiguration"
 	ReasonReconcileFailed          = "ReconcileFailed"
 	ReasonWriteNotVerified         = "WriteNotVerified"
 	ReasonProviderUnavailable      = "ProviderUnavailable"
@@ -80,7 +86,24 @@ const (
 
 	// HealthPollInterval is how often PlatformConfig re-reads provider health.
 	HealthPollInterval = 2 * time.Minute
+
+	// UnconfiguredRequeue paces retries while no control-plane connection is
+	// configured. Like PausedRequeue, the answer cannot change without human
+	// action, so this goes through the requeue path rather than the error
+	// path — returning an error would hot-loop the workqueue and fill the log
+	// with backoff noise describing a state that is working as designed.
+	UnconfiguredRequeue = 5 * time.Minute
 )
+
+// unconfiguredMessage renders the condition message for a control-plane call
+// that was never attempted because nothing was configured. Shared so all three
+// reconcilers tell the user the same thing about how to fix it.
+func unconfiguredMessage(what string, err error) string {
+	return fmt.Sprintf("%s was not attempted: %v. Point this operator at a K8Boss control plane by "+
+		"setting K8BOSS_BACKEND_URL, K8BOSS_CLUSTER_ID and K8BOSS_OPERATOR_TOKEN on its Deployment "+
+		"— under OLM, via the Subscription's spec.config.env and a Secret named k8boss-operator "+
+		"(key: token) in the operator's namespace.", what, err)
+}
 
 // setCondition stamps a condition, carrying the CR's generation so a reader
 // can tell whether the condition describes the spec they are looking at.

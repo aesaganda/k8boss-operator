@@ -169,3 +169,52 @@ func TestMisconfiguredCheckerFailsClosed(t *testing.T) {
 		t.Fatal("a checker with no backend client must not report ready")
 	}
 }
+
+// An operator nobody has configured is idle, not broken: there is no outage to
+// report and no request was attempted, so readiness must pass. Under OLM this
+// is load-bearing — failing readiness here holds the ClusterServiceVersion out
+// of Succeeded forever for a deployment behaving exactly as designed.
+func TestUnconfiguredBackendIsStillReady(t *testing.T) {
+	c := &Checker{
+		Discovery: allCRDsServed(),
+		Backend: fakeBackend{err: func() error {
+			_, err := backendclient.NewUnconfigured("K8BOSS_CLUSTER_ID").GetPaused(context.Background())
+			return err
+		}()},
+	}
+	if err := c.Check(nil); err != nil {
+		t.Fatalf("an unconfigured backend must not fail readiness, got %v", err)
+	}
+}
+
+// ...and the exception must stay narrow. A CONFIGURED backend that cannot be
+// reached is a real outage and must still fail readiness loudly — otherwise
+// the degrade-to-ready path would swallow every backend failure.
+func TestConfiguredButUnreachableStillFailsReadiness(t *testing.T) {
+	c := &Checker{
+		Discovery: allCRDsServed(),
+		Backend:   fakeBackend{err: errors.New("dial tcp 10.0.0.1:8010: connect: connection refused")},
+	}
+	err := c.Check(nil)
+	if err == nil {
+		t.Fatal("an unreachable configured backend must fail readiness")
+	}
+	if !strings.Contains(err.Error(), "NOT confirmed reachable") {
+		t.Errorf("error should say the backend was not confirmed reachable, got %q", err)
+	}
+}
+
+// The CRD half of preflight must keep running when the backend is
+// unconfigured: "the operator is idle" must never mask "the CRDs are missing".
+func TestUnconfiguredDoesNotMaskMissingCRDs(t *testing.T) {
+	c := &Checker{
+		Discovery: fakeLister{list: &metav1.APIResourceList{}},
+		Backend: fakeBackend{err: func() error {
+			_, err := backendclient.NewUnconfigured("K8BOSS_CLUSTER_ID").GetPaused(context.Background())
+			return err
+		}()},
+	}
+	if err := c.Check(nil); err == nil {
+		t.Fatal("missing CRDs must still fail readiness even when unconfigured")
+	}
+}

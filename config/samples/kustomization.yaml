@@ -1,0 +1,12 @@
+# Consumed by config/manifests: `operator-sdk generate bundle` reads whatever
+# this kustomization emits and packs it into the CSV's `alm-examples`
+# annotation, which is what the OperatorHub/OpenShift console offers as the
+# "Create instance" starting point for each kind. One sample per owned CRD is
+# a review expectation, not a nicety — a kind with no example lands the user
+# in a blank YAML editor.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - k8boss_v1alpha1_platformconfig.yaml
+  - k8boss_v1alpha1_segmentationpolicy.yaml
+  - k8boss_v1alpha1_runtimesecuritypolicy.yaml

@@ -167,6 +167,13 @@ func segmentationReadyMessage(result *backendclient.ReconcileResult) string {
 func (r *SegmentationPolicyReconciler) reconcileError(ctx context.Context,
 	cr *v1alpha1.SegmentationPolicy, err error) (ctrl.Result, error) {
 
+	if backendclient.IsUnconfigured(err) {
+		// No connection was ever configured, so no call was attempted. Not a
+		// backend fault and not a reconcile failure — its own reason.
+		return r.notReady(ctx, cr, ReasonAwaitingConfiguration,
+			unconfiguredMessage("Segmentation policy reconcile", err), UnconfiguredRequeue)
+	}
+
 	if backendclient.IsPaused(err) {
 		// Expected state, not a fault: the server-side kill switch is on even
 		// though PlatformConfig said otherwise (e.g. someone paused the API
@@ -229,6 +236,23 @@ func (r *SegmentationPolicyReconciler) finalize(ctx context.Context,
 
 	res, err := r.Backend.CloseCREdges(ctx, crKindSegmentationPolicy, r.ClusterID, cr.Namespace, cr.Name)
 	if err != nil {
+		if backendclient.IsUnconfigured(err) {
+			// Release, do not hold. The finalizer exists to stop edges being
+			// orphaned, and an operator that was never configured never
+			// reconciled this CR, so it has no edges to orphan — there is
+			// nothing for the hold to protect. Holding anyway would wedge
+			// every CR in Terminating with no human action able to clear it
+			// except editing finalizers by hand, and would make an OLM
+			// uninstall hang on objects the operator never touched.
+			log.FromContext(ctx).Info("releasing finalizer without a close call: the operator is "+
+				"unconfigured, so this CR was never reconciled and has no graph edges to close",
+				"kind", crKindSegmentationPolicy)
+			controllerutil.RemoveFinalizer(cr, CREdgesFinalizer)
+			if uerr := r.Update(ctx, cr); uerr != nil {
+				return ctrl.Result{}, fmt.Errorf("removing finalizer on an unconfigured operator: %w", uerr)
+			}
+			return ctrl.Result{}, nil
+		}
 		if backendclient.IsPaused(err) {
 			// The kill switch covers cleanup too (contract §3). Hold the
 			// object rather than deleting it with its edges still open.

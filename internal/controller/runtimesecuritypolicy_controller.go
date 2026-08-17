@@ -160,6 +160,15 @@ func runtimeReadyMessage(result *backendclient.ReconcileResult) string {
 func (r *RuntimeSecurityPolicyReconciler) reconcileError(ctx context.Context,
 	cr *v1alpha1.RuntimeSecurityPolicy, err error) (ctrl.Result, error) {
 
+	if backendclient.IsUnconfigured(err) {
+		// Distinct from ProviderUnavailable below, and the distinction is the
+		// same one that branch exists for: "Tetragon is not confirmed
+		// installed" and "we were never told where the control plane is" are
+		// two different unanswered questions, and neither is zero evidence.
+		return r.notReady(ctx, cr, ReasonAwaitingConfiguration,
+			unconfiguredMessage("Runtime security policy reconcile", err), UnconfiguredRequeue)
+	}
+
 	if backendclient.IsPaused(err) {
 		return r.notReady(ctx, cr, ReasonPaused,
 			fmt.Sprintf("Control-plane API is paused server-side; no mutation was applied: %v", err),
@@ -226,6 +235,19 @@ func (r *RuntimeSecurityPolicyReconciler) finalize(ctx context.Context,
 
 	res, err := r.Backend.CloseCREdges(ctx, crKindRuntimeSecurityPolicy, r.ClusterID, cr.Namespace, cr.Name)
 	if err != nil {
+		if backendclient.IsUnconfigured(err) {
+			// Same reasoning as the SegmentationPolicy finalizer: an operator
+			// that was never configured never reconciled this CR, so there are
+			// no edges to orphan and nothing for the hold to protect.
+			log.FromContext(ctx).Info("releasing finalizer without a close call: the operator is "+
+				"unconfigured, so this CR was never reconciled and has no graph edges to close",
+				"kind", crKindRuntimeSecurityPolicy)
+			controllerutil.RemoveFinalizer(cr, CREdgesFinalizer)
+			if uerr := r.Update(ctx, cr); uerr != nil {
+				return ctrl.Result{}, fmt.Errorf("removing finalizer on an unconfigured operator: %w", uerr)
+			}
+			return ctrl.Result{}, nil
+		}
 		if backendclient.IsPaused(err) {
 			return r.notReady(ctx, cr, ReasonPaused,
 				fmt.Sprintf("Deletion is blocked: the control-plane API is paused, so this CR's "+

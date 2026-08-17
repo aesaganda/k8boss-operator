@@ -1,0 +1,23 @@
+apiVersion: k8boss.io/v1alpha1
+kind: SegmentationPolicy
+metadata:
+  # No namespace: OLM substitutes the install/target namespace into
+  # alm-examples, and a hardcoded one here would render an example the user
+  # cannot create.
+  name: payments-api-segmentation
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: payments-api
+  ingress:
+    - ports: [8443]
+      peerSelector:
+        app.kubernetes.io/name: checkout-web
+      peerNamespace: storefront
+  egress:
+    - ports: [5432]
+      peerSelector:
+        app.kubernetes.io/name: payments-db
+      # peerNamespace omitted == the policy's own namespace.
+  # Overrides PlatformConfig.spec.flowProvider for this policy only.
+  providerRef: Hubble

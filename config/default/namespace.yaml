@@ -1,0 +1,11 @@
+# Lives here, not in config/manager, because an OLM bundle must not ship a
+# Namespace: OLM decides where the operator lands (the OperatorGroup's
+# target namespace) and a bundled Namespace collides with that decision.
+# config/manifests — the CSV base — composes ../manager without this file,
+# while `make deploy` still creates the namespace through config/default.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8boss-system
+  labels:
+    app.kubernetes.io/name: k8boss-operator

@@ -91,37 +91,57 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	// Fail fast on missing identity/connection config. A manager that starts
-	// without knowing which cluster it serves would happily reconcile CRs
-	// against cluster 0 — a confidently wrong answer, which is worse than
-	// not starting.
+	// Identity/connection config. Missing settings do NOT exit: they put the
+	// operator into an explicit unconfigured state where it starts, stays
+	// healthy, reconciles nothing and says so on every CR it owns.
+	//
+	// This deliberately replaces three os.Exit(1)s. Crash-looping was the
+	// right call for a hand-run `make deploy`, where the operator IS the whole
+	// install and a loud failure names the env var to set. It is the wrong
+	// call under OLM/OperatorHub: an OLM install carries no user input by
+	// construction, so a manager that exits on defaults means the
+	// ClusterServiceVersion never reaches Succeeded and the operator cannot be
+	// listed at all. The information is not lost — it moves from a pod restart
+	// message to a status condition on each CR (ReasonAwaitingConfiguration),
+	// which is where a user looking at the object will actually find it.
+	//
+	// What has NOT changed: an unconfigured operator still mutates nothing.
+	// The reconcilers pause whenever they cannot positively confirm the kill
+	// switch is off, and cluster identity is still never guessed — clusterID
+	// stays 0 and every call short-circuits before a request is built, so
+	// there is no path on which CRs get reconciled against "cluster 0".
+	operatorToken := os.Getenv("K8BOSS_OPERATOR_TOKEN")
+
+	var missing []string
 	if backendURL == "" {
-		setupLog.Error(nil, "K8BOSS_BACKEND_URL (or --backend-url) is required; "+
-			"the operator has no other path into the Knowledge Graph")
-		os.Exit(1)
+		missing = append(missing, "K8BOSS_BACKEND_URL")
 	}
 	clusterID, err := parseClusterID(clusterIDFlag)
 	if err != nil {
-		setupLog.Error(err, "K8BOSS_CLUSTER_ID (or --cluster-id) is required and must be a "+
-			"positive integer matching this cluster's K8Boss registration")
-		os.Exit(1)
+		missing = append(missing, "K8BOSS_CLUSTER_ID")
+	}
+	if operatorToken == "" {
+		// The backend fails closed on an unset OPERATOR_API_TOKEN (503,
+		// operator_token_not_configured) because that surface writes graph
+		// edges and holds the kill switch, so a blank token is as unusable as
+		// a blank URL.
+		missing = append(missing, "K8BOSS_OPERATOR_TOKEN")
 	}
 
-	// Required, for the same reason as the two above: it is this pod's own
-	// config, not someone else's outage. The backend now fails closed on an
-	// unset OPERATOR_API_TOKEN (503, code operator_token_not_configured)
-	// because that surface writes graph edges and holds the kill switch — so
-	// starting without a token buys nothing but a reconciler that 503s on
-	// every call while readiness quietly reports the backend at fault.
-	// Crash-looping with this message names the actual problem.
-	operatorToken := os.Getenv("K8BOSS_OPERATOR_TOKEN")
-	if operatorToken == "" {
-		setupLog.Error(nil, "K8BOSS_OPERATOR_TOKEN is required; the backend's operator "+
-			"control-plane API does not run unauthenticated. Set OPERATOR_API_TOKEN on the "+
-			"backend and put the same value in the k8boss-operator Secret (key: token).")
-		os.Exit(1)
+	var backend *backendclient.Client
+	if len(missing) > 0 {
+		setupLog.Info("starting UNCONFIGURED: no control-plane connection, so nothing will be "+
+			"reconciled. Every K8Boss CR will report Ready=False with reason "+
+			"AwaitingConfiguration until this is set.",
+			"missing", missing,
+			"hint", "K8BOSS_BACKEND_URL is the K8Boss backend Service URL; K8BOSS_CLUSTER_ID is "+
+				"this cluster's registration id from the K8Boss UI (Clusters -> Add Cluster); "+
+				"K8BOSS_OPERATOR_TOKEN must match OPERATOR_API_TOKEN on the backend and is read "+
+				"from the k8boss-operator Secret (key: token).")
+		backend = backendclient.NewUnconfigured(missing...)
+	} else {
+		backend = backendclient.New(backendURL, operatorToken)
 	}
-	backend := backendclient.New(backendURL, operatorToken)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                  scheme,

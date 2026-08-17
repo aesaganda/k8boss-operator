@@ -1,0 +1,25 @@
+# Input to `operator-sdk generate bundle` (see the `bundle` target in the
+# Makefile). This is the OLM packaging path and is deliberately NOT ../default:
+#
+#   * ../default carries namespace.yaml, and a bundle must not ship a
+#     Namespace — OLM places the operator itself via the OperatorGroup, and a
+#     bundled Namespace both collides with that and fails bundle validation.
+#   * ../default also pins `namespace: k8boss-system` on every resource. OLM
+#     regenerates the ServiceAccount/RoleBinding into whatever namespace the
+#     Subscription targets, so baking one in here would be a lie the CSV then
+#     has to unpick.
+#
+# ../samples is here only so `generate bundle` can lift the CRs into the CSV's
+# alm-examples annotation; the sample CRs are not installed by the bundle.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- bases/k8boss-operator.clusterserviceversion.yaml
+- ../crd
+- ../rbac
+- ../manager
+- ../samples
+images:
+- name: ghcr.io/aesaganda/k8boss/k8boss-operator
+  newName: ghcr.io/aesaganda/k8boss/k8boss-operator
+  newTag: latest

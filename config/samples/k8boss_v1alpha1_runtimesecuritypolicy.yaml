@@ -1,0 +1,16 @@
+apiVersion: k8boss.io/v1alpha1
+kind: RuntimeSecurityPolicy
+metadata:
+  name: payments-api-runtime
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: payments-api
+  # Names an EXISTING Tetragon TracingPolicy in this namespace. K8Boss attaches
+  # Knowledge Graph evidence to it and correlates what Tetragon reports — it
+  # does not create, generate or install the TracingPolicy.
+  tracingPolicyRef: block-shell-exec
+  deniedBinaries:
+    - /bin/sh
+    - /bin/bash
+    - /usr/bin/nc

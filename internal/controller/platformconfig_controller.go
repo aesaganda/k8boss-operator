@@ -245,6 +245,9 @@ func (r *PlatformConfigReconciler) setNotSingleton(ctx context.Context,
 }
 
 func pauseErrorReason(err error) string {
+	if backendclient.IsUnconfigured(err) {
+		return ReasonAwaitingConfiguration
+	}
 	var apiErr *backendclient.APIError
 	if errors.As(err, &apiErr) {
 		return ReasonReconcileFailed
@@ -253,6 +256,12 @@ func pauseErrorReason(err error) string {
 }
 
 func healthErrorReason(err error) string {
+	// Unconfigured must not land on ReasonHealthUndetermined either: that
+	// reason says "we asked about provider health and could not get an
+	// answer". We never asked.
+	if backendclient.IsUnconfigured(err) {
+		return ReasonAwaitingConfiguration
+	}
 	var apiErr *backendclient.APIError
 	if errors.As(err, &apiErr) {
 		return ReasonHealthUndetermined

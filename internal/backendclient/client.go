@@ -40,6 +40,11 @@ type Client struct {
 	baseURL string
 	token   string
 	http    *http.Client
+
+	// missing names the connection settings that were never supplied. When it
+	// is non-empty this client is a stub: every call fails immediately with
+	// *UnconfiguredError and no request is ever built. See NewUnconfigured.
+	missing []string
 }
 
 // New builds a client for the control-plane API. baseURL is the backend root
@@ -53,6 +58,47 @@ func New(baseURL, token string) *Client {
 		token:   token,
 		http:    &http.Client{Timeout: defaultTimeout},
 	}
+}
+
+// NewUnconfigured returns a Client that answers every call with an
+// *UnconfiguredError naming the settings in `missing`.
+//
+// It exists because "nobody has told us where the backend is" and "the backend
+// is down" are different answers, and the operator must never report the first
+// as the second. Before this, main.go resolved the difference by exiting
+// non-zero — correct for a hand-run `make deploy`, wrong under OLM, where the
+// install carries no user input and a crash-looping manager means the
+// ClusterServiceVersion never reaches Succeeded. So an unconfigured operator
+// now starts, stays healthy, reconciles nothing, and says exactly that on
+// every CR it owns.
+//
+// Note this does NOT weaken the fail-closed posture: the reconcilers are
+// already paused whenever they cannot positively confirm the kill switch is
+// off (checkPauseGate), so a stub client can never be mistaken for permission
+// to mutate.
+func NewUnconfigured(missing ...string) *Client {
+	return &Client{missing: missing, http: &http.Client{Timeout: defaultTimeout}}
+}
+
+// UnconfiguredError is returned by every method of a Client built with
+// NewUnconfigured. It is emphatically NOT an *APIError: we never reached the
+// API, and never tried.
+type UnconfiguredError struct {
+	Missing []string
+}
+
+func (e *UnconfiguredError) Error() string {
+	return fmt.Sprintf("the K8Boss control-plane connection is not configured (%s unset), "+
+		"so no call was attempted", strings.Join(e.Missing, ", "))
+}
+
+// IsUnconfigured reports whether err means "we were never told how to reach
+// the control plane", as opposed to having tried and failed. Callers must give
+// it its own condition reason — collapsing it into BackendUnreachable would
+// blame an outage on a backend nobody has pointed us at yet.
+func IsUnconfigured(err error) bool {
+	var e *UnconfiguredError
+	return errors.As(err, &e)
 }
 
 // ── error shape ─────────────────────────────────────────────────────────
@@ -281,6 +327,12 @@ type ProviderHealthResponse struct {
 // ── transport ───────────────────────────────────────────────────────────
 
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
+	// One guard, at the single chokepoint every method routes through, rather
+	// than six identical guards on the six exported calls.
+	if len(c.missing) > 0 {
+		return &UnconfiguredError{Missing: c.missing}
+	}
+
 	var rdr io.Reader
 	if body != nil {
 		buf, err := json.Marshal(body)
