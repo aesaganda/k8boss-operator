@@ -5,8 +5,9 @@
 // operator process serves exactly one K8Boss cluster registration, so cluster
 // identity is resolved ONCE here at startup from K8BOSS_CLUSTER_ID and handed
 // to each reconciler as a plain field — never re-derived per-CR, and no
-// multi-cluster routing is built (YAGNI; nothing needs it yet). See NOTES.md
-// for why the env var rather than a CRD field.
+// multi-cluster routing is built (YAGNI; nothing needs it yet). It is an env
+// var rather than a CRD field because one operator instance serves exactly one
+// cluster registration: that is deployment identity, not desired state.
 package main
 
 import (

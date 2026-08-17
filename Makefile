@@ -2,7 +2,7 @@
 #
 # `make install` = CRDs only. `make deploy` = CRDs + RBAC + ServiceAccount +
 # Deployment. Both go through config/, which is a self-contained install path
-# and deliberately separate from deploy/helm's control-plane chart.
+# and deliberately separate from the K8Boss control-plane Helm chart.
 #
 # Tooling is expected on PATH or under $(GOBIN); nothing here downloads
 # binaries behind your back. Install controller-gen with:
@@ -60,10 +60,9 @@ test:
 .PHONY: check
 check: build vet test
 
-# CI (.github/workflows/build-images.yml) builds backend/frontend/agent only —
-# it does not know about this image yet, so `make deploy` pulls a tag nobody
-# publishes until that matrix gains a fourth entry. Build and push by hand
-# until then.
+# The published image must be ANONYMOUSLY pullable: the OperatorHub submission
+# pipeline does a credential-less `docker pull` of whatever the CSV's
+# containerImage names, and a private package fails the review outright.
 .PHONY: docker-build
 docker-build:
 	docker build -t $(IMG) .

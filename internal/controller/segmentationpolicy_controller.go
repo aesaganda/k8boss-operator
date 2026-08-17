@@ -128,8 +128,8 @@ func (r *SegmentationPolicyReconciler) Reconcile(ctx context.Context, req ctrl.R
 // inconsistentSegmentationResult returns a human-readable reason when a 200
 // response does not actually evidence a converged write, or "" when it does.
 //
-// The server builds exactly one ENFORCED_BY edge per matched workload
-// (backend/app/operator/reconcile.py), so edges_upserted != matched_workloads
+// The control plane builds exactly one ENFORCED_BY edge per matched workload,
+// so edges_upserted != matched_workloads
 // means the response is not describing the reconcile we asked for and Ready
 // must not be set from it.
 func inconsistentSegmentationResult(res *backendclient.ReconcileResult) string {

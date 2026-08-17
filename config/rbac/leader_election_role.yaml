@@ -4,7 +4,7 @@
 # Why the split: role.yaml is generated from +kubebuilder:rbac markers and says
 # exactly what the reconcilers touch (k8boss.io CRDs and nothing else). Leader
 # election is a property of the *manager process*, not of any reconciler, and
-# no marker asks for it (see NOTES.md, teammate-controller). Merging the two
+# no marker asks for it. Merging the two
 # would make a regenerated role.yaml look like the reconcilers had quietly
 # grown Lease and Event access. Two files, two privilege sets, both legible.
 #

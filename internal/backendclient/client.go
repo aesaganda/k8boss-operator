@@ -1,7 +1,7 @@
 // Package backendclient is the operator's only door into the K8Boss
 // Knowledge Graph (ADR-0003 §2: "the operator never writes to Postgres
-// directly"). It speaks the contract documented in
-// backend/app/api/internal_operator_api_CONTRACT.md and nothing else.
+// directly"). It speaks the K8Boss control plane's operator API contract
+// (/internal/operator/v1) and nothing else.
 //
 // Two things this package exists to get right, both of them instances of the
 // repo-wide defect standard ("a wrong answer delivered confidently is worse

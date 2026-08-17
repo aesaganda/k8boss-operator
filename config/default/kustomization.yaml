@@ -2,11 +2,11 @@
 #
 #   kubectl kustomize config/default | kubectl apply -f -     (== make deploy)
 #
-# This is a self-contained install path that does NOT touch deploy/helm's
-# control-plane chart — the operator is a separate binary with its own
-# lifecycle and failure domain (ADR-0003 §1), so it gets its own package
-# rather than being grafted into a chart that ships the backend, frontend,
-# Postgres and Redis.
+# This is a self-contained install path that does NOT touch the K8Boss
+# control-plane Helm chart — the operator is a separate binary with its own
+# lifecycle and failure domain (ADR-0003 §1), so it gets its own package rather
+# than being grafted into a chart that ships the backend, frontend, Postgres
+# and Redis. For an OLM install, see `make bundle` instead.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: k8boss-system

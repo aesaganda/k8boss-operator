@@ -36,7 +36,7 @@ type PlatformConfigSpec struct {
 	// Paused halts every reconciler this operator runs (SegmentationPolicy,
 	// RuntimeSecurityPolicy) without deleting or deregistering anything they
 	// already reconciled. This is the CRD-native half of the previously
-	// deferred delivery kill switch — see NOTES.md. Defaults true: an
+	// deferred delivery kill switch. Defaults true: an
 	// operator with no PlatformConfig applied yet must not silently start
 	// mutating cluster state.
 	// +kubebuilder:default=true

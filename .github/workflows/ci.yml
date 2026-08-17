@@ -1,0 +1,84 @@
+name: ci
+
+# GitHub-HOSTED runners, deliberately. This repository is public and accepts
+# fork pull requests, which means CI executes untrusted code by design; the
+# K8Boss monorepo's self-hosted runners are personal hardware and must never be
+# reachable from here.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build, vet, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # The controller suite runs against a real apiserver+etcd (envtest) and
+      # hard-fails when the binaries are missing rather than skipping — a suite
+      # that degrades to "no control plane, everything passes" is the defect
+      # class it exists to hunt. `make test` provisions them via setup-envtest.
+      - name: Test (envtest)
+        run: make test
+
+  generated:
+    name: Generated artifacts are current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: CRDs and deepcopy match the Go types
+        # A CRD schema that drifts from its Go type ships an API the operator
+        # does not implement. Regenerate and diff rather than trusting that
+        # whoever edited the types remembered to run `make manifests`.
+        run: |
+          go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5 \
+            object:headerFile="" paths="./api/..."
+          go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5 \
+            crd paths="./api/..." output:crd:artifacts:config=config/crd/bases
+          git diff --exit-code -- api config/crd
+
+      - name: OLM bundle is current and passes the submission validators
+        # bundle/ is GENERATED from config/{crd,rbac,manager,manifests,samples}
+        # and is what OLM actually grants permissions from, so a stale bundle
+        # does not fail loudly — it hands OLM the wrong RBAC.
+        #
+        # `make bundle` also runs the operatorframework and good-practices
+        # validators that the k8s-operatorhub/community-operators pipeline gates
+        # on, so a rejection surfaces here rather than in a PR against someone
+        # else's repository.
+        #
+        # Generation is idempotent by construction: `make bundle` restores
+        # createdAt from the CSV base, because operator-sdk otherwise stamps the
+        # current time and the diff below could never pass.
+        env:
+          OPERATOR_SDK_VERSION: v1.42.3
+        run: |
+          set -euo pipefail
+          curl -fsSLo "$RUNNER_TEMP/operator-sdk" \
+            "https://github.com/operator-framework/operator-sdk/releases/download/${OPERATOR_SDK_VERSION}/operator-sdk_linux_amd64"
+          chmod +x "$RUNNER_TEMP/operator-sdk"
+          make bundle \
+            OPERATOR_SDK="$RUNNER_TEMP/operator-sdk" \
+            KUSTOMIZE="go run sigs.k8s.io/kustomize/kustomize/v5@v5.4.3"
+          git diff --exit-code -- bundle config/manifests

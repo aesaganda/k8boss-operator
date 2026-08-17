@@ -51,8 +51,8 @@ type SegmentationPolicyStatus struct {
 	// It is NOT a claim that anything is enforcing this policy. A FlowProvider
 	// is flow *telemetry* (Hubble/Calico/RHNO); enforcement is the CNI's job
 	// and K8Boss does not observe it. This field was called `enforcedProvider`
-	// and did read as that claim — see NOTES.md for what real enforcement
-	// confirmation would require.
+	// and did read as that claim; confirming real enforcement would mean
+	// observing the CNI's own programmed state, which K8Boss does not do.
 	//
 	// Set only on the confirmed-success path, so an unverified write leaves it
 	// empty rather than stamping intent (ADR-0003).

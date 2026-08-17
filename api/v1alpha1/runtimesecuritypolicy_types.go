@@ -5,8 +5,8 @@ import (
 )
 
 // RuntimeSecurityPolicySpec deliberately does not reimplement Tetragon's
-// policy language. RuntimeSecurityProvider (backend/app/runtime/provider.py)
-// stays the sole contract for runtime enforcement (ADR-0003, mirrors the
+// policy language. The K8Boss control plane's RuntimeSecurityProvider stays
+// the sole contract for runtime enforcement (ADR-0003, mirrors the
 // FlowProvider/RuntimeSecurityProvider separation invariant) — this CRD
 // attaches K8Boss Knowledge Graph evidence to an existing Tetragon
 // TracingPolicy, it does not replace it. This reconciler must never import
