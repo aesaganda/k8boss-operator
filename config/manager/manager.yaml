@@ -23,6 +23,30 @@ spec:
     spec:
       serviceAccountName: k8boss-operator
       terminationGracePeriodSeconds: 10
+      # Schedule only where the image can actually run. The manager image is
+      # built for linux/amd64 and linux/arm64 only, and an OpenShift cluster
+      # with multi-arch compute can hold s390x or ppc64le nodes — landing there
+      # fails with ImagePullBackOff or an exec format error, both of which read
+      # like a broken build rather than a scheduling mistake.
+      #
+      # This is the companion to the operatorframework.io/arch.* labels on the
+      # CSV: the labels decide which clusters OLM will OFFER the operator on,
+      # this decides which nodes it may land on within one. Keep both in step
+      # with the publish job's `platforms:`.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - amd64
+                      - arm64
+                  - key: kubernetes.io/os
+                    operator: In
+                    values:
+                      - linux
       securityContext:
         runAsNonRoot: true
         seccompProfile:

@@ -40,6 +40,23 @@ metadata:
   # "true" here is exactly the confidently-wrong answer this project treats as
   # a defect.
   labels:
+    # WHICH ARCHITECTURES OLM MAY LIST THIS OPERATOR ON. Without these, OLM does
+    # not offer the operator on a cluster of that architecture AT ALL — the
+    # image supports arm64, the catalog stays silent about it, and an arm64
+    # user simply never sees it. The capability ships and is invisible, which
+    # is worse than not shipping it.
+    #
+    # These must track what the publish job actually builds
+    # (.github/workflows/ci.yml: platforms: linux/amd64,linux/arm64). Adding a
+    # platform there without adding it here publishes an image nobody can
+    # install; removing one without removing it here advertises an
+    # architecture that will fail to pull.
+    #
+    # Caught by `operator-sdk bundle validate --select-optional name=multiarch`,
+    # which is why that validator is now in `make bundle-validate`.
+    operatorframework.io/arch.amd64: supported
+    operatorframework.io/arch.arm64: supported
+    operatorframework.io/os.linux: supported
     # TRUE. At runtime the operator opens exactly one kind of connection: HTTP
     # to the K8Boss backend URL the administrator supplies, which is an
     # in-cluster Service. It fetches nothing from the internet, embeds no
