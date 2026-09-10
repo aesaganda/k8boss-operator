@@ -3,5 +3,14 @@ kind: Kustomization
 resources:
 - manager.yaml
 images:
-- name: ghcr.io/aesaganda/k8boss/k8boss-operator
-  newTag: main-6f8ef10
+# `latest`, deliberately. This used to read `newTag: main-6f8ef10`, stamped by
+# the K8Boss monorepo's image-pin bot — a tag that never existed in this
+# package and now never will, because the monorepo's build-images.yml no longer
+# builds an operator image at all. A direct `make deploy` must render something
+# anonymously pullable.
+#
+# The bundle does NOT inherit this: `make bundle` runs `kustomize edit set
+# image` over config/manifests, so OPERATOR_IMG (a digest, for a submission)
+# wins there. See the Makefile's `bundle` and `bundle-submission` targets.
+- name: ghcr.io/aesaganda/k8boss-operator
+  newTag: latest

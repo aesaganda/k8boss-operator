@@ -74,14 +74,25 @@ metadata:
       ]
     capabilities: Basic Install
     categories: Security,Networking,Monitoring
-    containerImage: ghcr.io/aesaganda/k8boss/k8boss-operator:latest
-    createdAt: "2026-08-17T00:00:00Z"
+    containerImage: ghcr.io/aesaganda/k8boss-operator:latest
+    createdAt: "2026-09-10T00:00:00Z"
     description: Reconciles Kubernetes-native segmentation and runtime-security intent
       into the K8Boss Knowledge Graph, with evidence.
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     repository: https://github.com/aesaganda/k8boss-operator
     support: https://github.com/aesaganda/k8boss-operator/issues
+  labels:
+    features.operators.openshift.io/cnf: "false"
+    features.operators.openshift.io/cni: "false"
+    features.operators.openshift.io/csi: "false"
+    features.operators.openshift.io/disconnected: "true"
+    features.operators.openshift.io/fips-compliant: "false"
+    features.operators.openshift.io/proxy-aware: "true"
+    features.operators.openshift.io/tls-profiles: "false"
+    features.operators.openshift.io/token-auth-aws: "false"
+    features.operators.openshift.io/token-auth-azure: "false"
+    features.operators.openshift.io/token-auth-gcp: "false"
   name: k8boss-operator.v0.1.0
   namespace: placeholder
 spec:
@@ -335,7 +346,7 @@ spec:
                       key: token
                       name: k8boss-operator
                       optional: true
-                image: ghcr.io/aesaganda/k8boss/k8boss-operator:latest
+                image: ghcr.io/aesaganda/k8boss-operator:latest
                 imagePullPolicy: IfNotPresent
                 livenessProbe:
                   httpGet:
@@ -414,7 +425,7 @@ spec:
   - name: Source
     url: https://github.com/aesaganda/k8boss-operator
   - name: Documentation
-    url: https://github.com/aesaganda/k8boss-operator/tree/main/docs
+    url: https://github.com/aesaganda/k8boss-operator#readme
   - name: Issues
     url: https://github.com/aesaganda/k8boss-operator/issues
   maintainers:
@@ -425,4 +436,7 @@ spec:
   provider:
     name: Eren Saganda
     url: https://github.com/aesaganda/k8boss-operator
+  relatedImages:
+  - image: ghcr.io/aesaganda/k8boss-operator:latest
+    name: manager
   version: 0.1.0

@@ -13,7 +13,23 @@ GOBIN ?= $(shell go env GOPATH)/bin
 CONTROLLER_GEN ?= $(GOBIN)/controller-gen
 KUBECTL ?= kubectl
 
-IMG ?= ghcr.io/aesaganda/k8boss/k8boss-operator:latest
+# The image name WITHOUT a tag, and the single place it is written. It is also
+# the `kustomize edit set image` match key in the `bundle` target below, so a
+# rename here cannot leave that key pointing at a name the manifests no longer
+# use — which would make `OPERATOR_IMG=...` silently no-op and produce a bundle
+# that validates locally while running a different image.
+#
+# This is the operator repo's OWN package, not the monorepo's
+# ghcr.io/aesaganda/k8boss/* namespace. Two reasons, both hard:
+#   * The monorepo's build-images.yml matrix builds backend/frontend/agent and
+#     no longer builds an operator image at all, so nothing would ever push to
+#     the old reference again.
+#   * GHCR visibility is per-package and tied to the repo that pushed it. The
+#     monorepo's packages stay private by policy (it carries the commercial
+#     licensing module); this one MUST be anonymously pullable, so it has to be
+#     a package this public repo owns.
+IMAGE_NAME ?= ghcr.io/aesaganda/k8boss-operator
+IMG ?= $(IMAGE_NAME):latest
 
 .PHONY: all
 all: build
@@ -122,13 +138,21 @@ VERSION ?= 0.1.0
 CHANNELS ?= alpha
 DEFAULT_CHANNEL ?= alpha
 
-# What the CSV tells OLM to run. Override with a DIGEST for a real submission:
-#   make bundle OPERATOR_IMG=ghcr.io/aesaganda/k8boss/k8boss-operator@sha256:...
-# A floating tag would let the running operator change under a CSV that claims
-# to pin it, which is the thing digest pinning exists to prevent.
-OPERATOR_IMG ?= ghcr.io/aesaganda/k8boss/k8boss-operator:latest
+# What the CSV tells OLM to run. The checked-in bundle carries the floating
+# tag, which is right for `make deploy` and for kind, and WRONG for a
+# submission — use `make bundle-submission`, which refuses anything but a
+# digest. A floating tag would let the running operator change under a CSV that
+# claims to pin it, which is what digest pinning exists to prevent.
+OPERATOR_IMG ?= $(IMAGE_NAME):latest
 
-BUNDLE_IMG ?= ghcr.io/aesaganda/k8boss/k8boss-operator-bundle:v$(VERSION)
+BUNDLE_IMG ?= $(IMAGE_NAME)-bundle:v$(VERSION)
+
+# Minimum OpenShift version the bundle advertises, in the form
+# redhat-openshift-ecosystem/community-operators-prod reads ("v4.14" = 4.14 and
+# above). 4.14 is where the features.operators.openshift.io/* labels in the CSV
+# base are consumed, and it is the oldest release this operator has been
+# exercised on. It is a TESTED FLOOR, not a claim that 4.13 would fail.
+OPENSHIFT_VERSIONS ?= v4.14
 
 .PHONY: bundle
 bundle: ## Generate bundle/ (CSV + CRDs + metadata) from config/manifests.
@@ -137,7 +161,7 @@ bundle: ## Generate bundle/ (CSV + CRDs + metadata) from config/manifests.
 	# here — it would re-prompt for and flatten fields that were written by
 	# hand on purpose (description, installModes rationale, descriptors).
 	cd config/manifests && $(KUSTOMIZE) edit set image \
-	  ghcr.io/aesaganda/k8boss/k8boss-operator=$(OPERATOR_IMG)
+	  $(IMAGE_NAME)=$(OPERATOR_IMG)
 	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate bundle \
 	  --overwrite --version $(VERSION) \
 	  --channels=$(CHANNELS) --default-channel=$(DEFAULT_CHANNEL)
@@ -162,6 +186,28 @@ bundle: ## Generate bundle/ (CSV + CRDs + metadata) from config/manifests.
 	  | sed 's|^ *createdAt: *||'); \
 	sed -i.bak "s|^    createdAt:.*|    createdAt: $$created|" \
 	  bundle/manifests/k8boss-operator.clusterserviceversion.yaml
+	# Inject relatedImages. It is what `oc adm catalog mirror` walks, so without
+	# it the CSV's disconnected=true label is a claim no mirroring tool can act
+	# on. It cannot live in the CSV base: `generate bundle` copies only a known
+	# set of spec fields out of the base and drops this one, so a base entry
+	# would validate, look authoritative, and never reach the bundle.
+	#
+	# Inserted before `version:` (the sole line at that indent) to keep the
+	# generator's alphabetical spec ordering, so regeneration is a no-op diff.
+	# awk + mv rather than sed -i: the in-place and insert-before spellings both
+	# differ between GNU and BSD sed, and this runs on macOS and on CI.
+	@awk '/^  version: /{ \
+	    print "  relatedImages:"; \
+	    print "  - image: $(OPERATOR_IMG)"; \
+	    print "    name: manager" \
+	  } { print }' $(CSV_PATH) > $(CSV_PATH).tmp && mv $(CSV_PATH).tmp $(CSV_PATH)
+	# com.redhat.openshift.versions is read by community-operators-prod only and
+	# is ignored by operatorhub.io, so one bundle serves both submissions.
+	# `generate bundle` rewrites metadata/annotations.yaml from scratch on every
+	# run, which is why this is stamped here rather than hand-held in the file.
+	@grep -q 'com.redhat.openshift.versions' bundle/metadata/annotations.yaml \
+	  || printf '  com.redhat.openshift.versions: "%s"\n' '$(OPENSHIFT_VERSIONS)' \
+	       >> bundle/metadata/annotations.yaml
 	rm -f bundle/manifests/k8boss-operator.clusterserviceversion.yaml.bak
 	$(MAKE) bundle-validate
 
@@ -173,6 +219,41 @@ bundle-validate: ## Run the bundle validators community-operators gates on.
 	$(OPERATOR_SDK) bundle validate ./bundle
 	$(OPERATOR_SDK) bundle validate ./bundle --select-optional suite=operatorframework
 	$(OPERATOR_SDK) bundle validate ./bundle --select-optional name=good-practices
+
+# The only supported way to build a bundle for an actual submission.
+#
+# It exists because the failure it prevents is silent: a bundle carrying
+# `:latest` validates clean, installs clean, and is WRONG — the CSV claims to
+# describe a specific operator while the tag it names can be repointed at
+# different code tomorrow, and `oc adm catalog mirror` cannot mirror a floating
+# tag reproducibly. Nothing in `bundle validate` rejects it, so the check has to
+# live here.
+#
+#   make bundle-submission OPERATOR_IMG=ghcr.io/aesaganda/k8boss-operator@sha256:<digest>
+#
+# Get the digest from the publish job's summary, or:
+#   docker buildx imagetools inspect ghcr.io/aesaganda/k8boss-operator:v0.1.0
+.PHONY: bundle-submission
+bundle-submission: ## Build a digest-pinned bundle for community-operators. Requires OPERATOR_IMG=...@sha256:...
+	@case '$(OPERATOR_IMG)' in \
+	  *@sha256:*) ;; \
+	  *) echo 'ERROR: OPERATOR_IMG must be digest-pinned for a submission, got: $(OPERATOR_IMG)'; \
+	     echo '       A floating tag lets the running operator change under a CSV that'; \
+	     echo '       claims to pin it, and cannot be mirrored reproducibly.'; \
+	     echo '       Pass OPERATOR_IMG=$(IMAGE_NAME)@sha256:<digest>'; \
+	     exit 1 ;; \
+	esac
+	$(MAKE) bundle OPERATOR_IMG='$(OPERATOR_IMG)'
+	@# Prove it landed everywhere it has to, rather than trusting the seds above.
+	@for field in 'containerImage: $(OPERATOR_IMG)' 'image: $(OPERATOR_IMG)'; do \
+	  grep -q "$$field" $(CSV_PATH) \
+	    || { echo "ERROR: '$$field' missing from the generated CSV"; exit 1; }; \
+	done
+	@! grep -nE 'image: .*$(IMAGE_NAME):' $(CSV_PATH) \
+	  || { echo 'ERROR: a tag-based image reference survived in the CSV'; exit 1; }
+	@echo 'OK: bundle pinned to $(OPERATOR_IMG)'
+
+CSV_PATH := bundle/manifests/k8boss-operator.clusterserviceversion.yaml
 
 .PHONY: bundle-build
 bundle-build: ## Build the bundle image.
