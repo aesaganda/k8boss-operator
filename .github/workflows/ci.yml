@@ -132,13 +132,25 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
-          # `latest` only from main, never from a tag build; a semver tag gets
-          # its own immutable tag. main also gets main-<sha> so a running
-          # operator can be traced back to a commit.
+          # `latest` = the newest RELEASED version, and nothing else.
+          #
+          # This is spelled out because the obvious-looking alternative is what
+          # was here first and it was wrong: a raw `latest` gated on
+          # is_default_branch, PLUS `type=ref,event=tag`. That does not mean
+          # "latest from main only" — flavor.latest defaults to `auto`, which
+          # adds `latest` on any semver tag regardless. So `latest` was pushed
+          # from BOTH, and every main push moved it to unreleased code until the
+          # next tag moved it back. An operator image whose `latest` flips
+          # between released and unreleased is a trap for anyone who pulls it,
+          # and config/manager/kustomization.yaml pins `newTag: latest` for
+          # `make deploy`.
+          #
+          # flavor.latest is now explicit rather than inherited, so the rule is
+          # readable here instead of being a default someone has to know.
+          flavor: latest=auto
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=main-{{sha}},enable={{is_default_branch}}
             type=ref,event=tag
+            type=raw,value=main-{{sha}},enable={{is_default_branch}}
 
       - name: Build and push
         id: push
