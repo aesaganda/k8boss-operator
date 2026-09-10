@@ -7,7 +7,18 @@
 # bumped go.mod 1.23 -> 1.25.0 without touching this line and the image stopped
 # building, while a non-fail-fast build matrix let sibling images keep
 # publishing, so nothing announced it. Bump both together.
-FROM golang:1.25 AS builder
+# --platform=$BUILDPLATFORM pins the builder stage to the NATIVE architecture of
+# the machine running the build, and it is load-bearing, not decoration.
+#
+# Without it, a `--platform linux/amd64,linux/arm64` build runs this entire
+# stage under QEMU emulation for the non-native target — so `go build` would
+# cross-compile to arm64 from an *emulated arm64* builder, which is both
+# pointless and pathologically slow: the first publish run sat on this step for
+# well over 13 minutes compiling the standard library under emulation.
+#
+# Pinning the builder native and letting GOARCH below do the cross-compile is
+# the whole reason TARGETARCH exists, and is the upstream kubebuilder pattern.
+FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
 WORKDIR /workspace
 
 COPY go.mod go.sum ./
@@ -26,8 +37,12 @@ ARG TARGETOS
 ARG TARGETARCH
 
 # CGO off + static: the runtime image has no libc.
+#
+# No `-a`. It forces a rebuild of every package including the standard library,
+# which in a fresh container buys nothing — the build cache starts empty anyway —
+# while doubling the work on a two-platform build.
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
-    go build -a -o manager ./cmd
+    go build -o manager ./cmd
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
