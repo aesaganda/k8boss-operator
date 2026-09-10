@@ -219,6 +219,12 @@ bundle-validate: ## Run the bundle validators community-operators gates on.
 	$(OPERATOR_SDK) bundle validate ./bundle
 	$(OPERATOR_SDK) bundle validate ./bundle --select-optional suite=operatorframework
 	$(OPERATOR_SDK) bundle validate ./bundle --select-optional name=good-practices
+	# multiarch cross-checks the CSV's operatorframework.io/arch.* labels against
+	# the platforms the manager image actually provides. It is the only validator
+	# that catches "we publish arm64 but never told OLM", whose symptom is not an
+	# error anywhere — the operator is simply absent from arm64 clusters. It was
+	# added after exactly that slipped into the first submission.
+	$(OPERATOR_SDK) bundle validate ./bundle --select-optional name=multiarch
 
 # The only supported way to build a bundle for an actual submission.
 #
