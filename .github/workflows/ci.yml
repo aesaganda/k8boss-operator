@@ -7,6 +7,9 @@ name: ci
 on:
   push:
     branches: [main]
+    # A `v*` tag is how a submission is cut: it publishes an immutable image
+    # tag and prints the digest `make bundle-submission` needs.
+    tags: ['v*']
   pull_request:
   workflow_dispatch: {}
 
@@ -82,3 +85,96 @@ jobs:
             OPERATOR_SDK="$RUNNER_TEMP/operator-sdk" \
             KUSTOMIZE="go run sigs.k8s.io/kustomize/kustomize/v5@v5.4.3"
           git diff --exit-code -- bundle config/manifests
+
+  # ── publish ──────────────────────────────────────────────────────────────
+  # The operator image has to be ANONYMOUSLY pullable or the OperatorHub
+  # submission fails outright: the community-operators pipeline does a
+  # credential-less `docker pull` of whatever the CSV's containerImage names,
+  # and upstream's troubleshooting guide calls a private image the single most
+  # common cause of a rejected submission.
+  #
+  # It is published from HERE, not from the K8Boss monorepo, for two reasons
+  # that are not stylistic:
+  #   * The monorepo's build-images.yml matrix builds backend/frontend/agent
+  #     and no longer builds an operator image at all.
+  #   * That workflow is pinned to `runs-on: [self-hosted, docker-rootful]`,
+  #     and the only runner carrying the label is offline — eight builds are
+  #     queued behind it. A public listing cannot depend on one personal box.
+  # GitHub-hosted runners have a rootful daemon, so the multi-arch build that
+  # needs binfmt registration works here without that label.
+  publish:
+    name: Publish image
+    # Never publish code that did not pass, and never from a fork PR (which has
+    # no package-write token anyway). Same `needs:` discipline as the monorepo.
+    needs: [build, generated]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # arm64 matters: OpenShift and EKS both run arm64 control planes, and an
+      # amd64-only operator image fails to schedule there with an exec format
+      # error that reads like a broken binary rather than a missing platform.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # `latest` only from main, never from a tag build; a semver tag gets
+          # its own immutable tag. main also gets main-<sha> so a running
+          # operator can be traced back to a commit.
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=main-{{sha}},enable={{is_default_branch}}
+            type=ref,event=tag
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false   # keeps the index to just the two platforms
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The digest is the whole point of this job for a submission, so it is
+      # surfaced rather than left to be dug out of the log.
+      - name: Digest and next step
+        run: |
+          {
+            echo '### Image published'
+            echo
+            echo '```'
+            echo 'ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}'
+            echo '```'
+            echo
+            echo 'Tags: `${{ steps.meta.outputs.tags }}`'
+            echo
+            echo 'To build the submission bundle against it:'
+            echo
+            echo '```bash'
+            echo 'make bundle-submission \'
+            echo '  OPERATOR_IMG=ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}'
+            echo '```'
+            echo
+            echo '> First publish only: the GHCR package starts PRIVATE. It must be'
+            echo '> made public, or the OperatorHub pipeline cannot pull it. There is'
+            echo '> no REST API for package visibility — it is a one-time change at'
+            echo '> Packages -> k8boss-operator -> Package settings -> Change visibility.'
+          } >> "$GITHUB_STEP_SUMMARY"

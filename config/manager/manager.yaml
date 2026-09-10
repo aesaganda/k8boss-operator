@@ -29,7 +29,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: manager
-          image: ghcr.io/aesaganda/k8boss/k8boss-operator:latest
+          image: ghcr.io/aesaganda/k8boss-operator:latest
           imagePullPolicy: IfNotPresent
           args:
             # ON, even at replicas: 1. A single replica does not *need* a
@@ -47,22 +47,34 @@ spec:
             # a Service) when there is a scraper.
             - --metrics-bind-address=127.0.0.1:8080
           env:
-            # REQUIRED, and deliberately blank here: this is the K8Boss cluster
-            # registration id, which differs per install. main.go exits
-            # non-zero on an empty/non-positive value rather than reconciling
-            # against cluster 0, so a forgotten override crash-loops loudly
-            # instead of writing edges to the wrong cluster.
+            # REQUIRED for the operator to do anything, and deliberately blank
+            # here: this is the K8Boss cluster registration id, which differs
+            # per install and is produced when a human registers the cluster in
+            # the K8Boss UI. There is no self-registration endpoint.
+            #
+            # Empty does NOT crash-loop. main.go starts UNCONFIGURED instead:
+            # the backend client becomes a stub that fails every call without
+            # putting a request on the wire, readiness passes (there is no
+            # outage to report), and every CR reports
+            # Ready=False reason=AwaitingConfiguration naming the unset vars.
+            # That is what lets an OLM install reach Succeeded with no user
+            # input. It is NOT a relaxation of fail-closed: the reconcilers
+            # still refuse to mutate while they cannot confirm the kill switch
+            # is off, and cluster identity is never guessed.
             - name: K8BOSS_CLUSTER_ID
               value: ""
             - name: K8BOSS_BACKEND_URL
               value: http://k8boss-backend.k8boss-system.svc:8010
-            # REQUIRED. The backend fails closed on an unset
-            # OPERATOR_API_TOKEN (503) — that API writes graph edges and holds
-            # the kill switch, so it does not run unauthenticated. main.go
-            # exits non-zero on an empty value, same as K8BOSS_CLUSTER_ID.
+            # REQUIRED for the operator to do anything. The backend fails
+            # closed on an unset OPERATOR_API_TOKEN (503) — that API writes
+            # graph edges and holds the kill switch, so it does not run
+            # unauthenticated.
+            #
+            # Empty starts UNCONFIGURED, same as K8BOSS_CLUSTER_ID above.
             # `optional: true` stays: without it a missing Secret is a
-            # scheduling failure with an obscure message, where a crash-loop
-            # logs exactly which env var to set.
+            # scheduling failure with an obscure message, where the
+            # unconfigured path logs exactly which env var to set and which
+            # Secret key it is read from.
             - name: K8BOSS_OPERATOR_TOKEN
               valueFrom:
                 secretKeyRef:

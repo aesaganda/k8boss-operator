@@ -19,7 +19,11 @@ resources:
 - ../rbac
 - ../manager
 - ../samples
+# Rewritten in place by `kustomize edit set image` from the Makefile's `bundle`
+# target, keyed on IMAGE_NAME. Checked in with the floating tag because that is
+# the dev default; a submission runs `make bundle-submission`, which substitutes
+# a digest here and refuses to proceed without one.
 images:
-- name: ghcr.io/aesaganda/k8boss/k8boss-operator
-  newName: ghcr.io/aesaganda/k8boss/k8boss-operator
+- name: ghcr.io/aesaganda/k8boss-operator
+  newName: ghcr.io/aesaganda/k8boss-operator
   newTag: latest

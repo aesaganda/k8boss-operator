@@ -16,13 +16,13 @@ metadata:
     # confidently-wrong answer this project treats as a defect.
     capabilities: Basic Install
     categories: Security,Networking,Monitoring
-    containerImage: ghcr.io/aesaganda/k8boss/k8boss-operator:latest
+    containerImage: ghcr.io/aesaganda/k8boss-operator:latest
     # The date this VERSION was cut, not the date the bundle was last
     # regenerated. `operator-sdk generate bundle` stamps "now" on every run,
     # which makes the generated bundle differ from itself between two identical
     # builds — so `make bundle` copies this value back over it. Bump it by hand
     # when bumping VERSION. Format is validated: yyyy-mm-ddThh:mm:ssZ.
-    createdAt: "2026-08-17T00:00:00Z"
+    createdAt: "2026-09-10T00:00:00Z"
     description: Reconciles Kubernetes-native segmentation and runtime-security
       intent into the K8Boss Knowledge Graph, with evidence.
     # The PUBLIC operator repo, not the k8boss monorepo — the monorepo stays
@@ -33,6 +33,55 @@ metadata:
     # links below together.
     repository: https://github.com/aesaganda/k8boss-operator
     support: https://github.com/aesaganda/k8boss-operator/issues
+  # redhat-openshift-ecosystem/community-operators-prod REQUIRES all ten of
+  # these labels to be present, each "true" or "false". They are claims about
+  # this operator, published on a listing, so each one below is answered from
+  # the code rather than copied from another operator's bundle — an unverified
+  # "true" here is exactly the confidently-wrong answer this project treats as
+  # a defect.
+  labels:
+    # TRUE. At runtime the operator opens exactly one kind of connection: HTTP
+    # to the K8Boss backend URL the administrator supplies, which is an
+    # in-cluster Service. It fetches nothing from the internet, embeds no
+    # external references, and runs one image — declared in spec.relatedImages
+    # below, which is what `oc adm catalog mirror` reads.
+    features.operators.openshift.io/disconnected: "true"
+    # FALSE, and not fixable by a label. FIPS compliance requires a certified
+    # crypto module: a RHEL-based image and the Red Hat Go toolchain with
+    # BoringCrypto. This builds CGO_ENABLED=0 against upstream golang onto
+    # distroless/static (see Dockerfile). Claiming true would assert a
+    # certification that does not exist.
+    features.operators.openshift.io/fips-compliant: "false"
+    # TRUE. internal/backendclient leaves http.Client.Transport nil, so it uses
+    # http.DefaultTransport, whose Proxy is ProxyFromEnvironment — the
+    # HTTP_PROXY/HTTPS_PROXY/NO_PROXY that OLM injects into the manager
+    # Deployment on a cluster with a cluster-wide Proxy are honoured.
+    # TestNewUsesProxyHonouringTransport pins that, because a future custom
+    # Transport without a Proxy func would silently falsify this label.
+    #
+    # Caveat worth knowing rather than hiding: the backend is normally an
+    # in-cluster Service, so NO_PROXY must cover .svc/.cluster.local or the
+    # in-cluster call is sent to an egress proxy. OpenShift's generated
+    # NO_PROXY already includes them; a hand-set proxy env on vanilla
+    # Kubernetes may not. See README "Behind a cluster-wide proxy".
+    features.operators.openshift.io/proxy-aware: "true"
+    # FALSE. The operator does not read the cluster's APIServer/Ingress
+    # tlsSecurityProfile, and serves no TLS endpoint of its own (metrics are
+    # bound to 127.0.0.1, probes are plain HTTP on the pod network).
+    features.operators.openshift.io/tls-profiles: "false"
+    # FALSE x3. No cloud provider integration of any kind: the operator
+    # authenticates to one thing, the K8Boss backend, with a bearer token from
+    # a Secret. There is no STS/workload-identity path to support.
+    features.operators.openshift.io/token-auth-aws: "false"
+    features.operators.openshift.io/token-auth-azure: "false"
+    features.operators.openshift.io/token-auth-gcp: "false"
+    # FALSE x3. Not a cloud-native network function, not a CNI plugin, not a
+    # CSI driver. The CNI distinction matters and is not pedantry: this
+    # operator records segmentation INTENT and never enforces it — enforcement
+    # is the CNI's job, and K8Boss does not claim to observe enforcement.
+    features.operators.openshift.io/cnf: "false"
+    features.operators.openshift.io/cni: "false"
+    features.operators.openshift.io/csi: "false"
   name: k8boss-operator.v0.0.0
   namespace: placeholder
 spec:
@@ -263,8 +312,10 @@ spec:
   links:
     - name: Source
       url: https://github.com/aesaganda/k8boss-operator
+    # The README, not a docs/ directory — this repo has none, and a listing
+    # whose Documentation link 404s is worse than one link fewer.
     - name: Documentation
-      url: https://github.com/aesaganda/k8boss-operator/tree/main/docs
+      url: https://github.com/aesaganda/k8boss-operator#readme
     - name: Issues
       url: https://github.com/aesaganda/k8boss-operator/issues
   # Personal, not corporate, and that is a deliberate answer rather than a
@@ -283,4 +334,10 @@ spec:
   # went GA in 1.19; PodSecurity admission, which the restricted-profile
   # securityContext here is written against, went GA in 1.25.
   minKubeVersion: 1.25.0
+  # relatedImages is deliberately NOT here. It SURVIVES `kustomize build` and is
+  # then DROPPED by `operator-sdk generate bundle` (v1.42.3), which copies only
+  # a known set of spec fields out of this base — verified, not assumed. A field
+  # that looks authoritative here and silently never reaches the bundle is a
+  # trap, so `make bundle` injects it into the generated CSV instead, stamped
+  # from OPERATOR_IMG alongside containerImage.
   version: 0.0.0
