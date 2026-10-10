@@ -18,7 +18,7 @@
 #
 # Pinning the builder native and letting GOARCH below do the cross-compile is
 # the whole reason TARGETARCH exists, and is the upstream kubebuilder pattern.
-FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26 AS builder
 WORKDIR /workspace
 
 COPY go.mod go.sum ./
