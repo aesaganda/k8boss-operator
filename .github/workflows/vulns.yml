@@ -1,0 +1,54 @@
+name: vulns
+
+# govulncheck: the vulnerabilities in Go's own database that this code reaches.
+# Dependabot never raises those, nor a standard-library one, and Dependabot
+# alerts are off here anyway: ten of them sat in the image unreported until it
+# was run by hand (#4) — eight in the standard library, because the builder was
+# Go 1.25, which is out of support and gets no more fixes.
+#
+# Its own workflow, not a job in ci.yml: ci.yml's publish job runs on every
+# event that is not a pull request, so the nightly schedule below would publish
+# an image every night. GitHub-hosted and read-only, like ci.yml — this
+# repository accepts fork pull requests.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # An entry published after a merge fails the next night, not the next PR.
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    name: govulncheck (the image's toolchain)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # govulncheck judges the standard library of the Go it runs on, so it runs
+      # on the one the image is built with: the Dockerfile's builder tag, read
+      # here rather than written down a third time (the Dockerfile already says
+      # its tag and go.mod's directive must move together).
+      - name: Builder toolchain
+        id: go
+        run: |
+          v="$(sed -nE 's/^FROM .*golang:([0-9]+\.[0-9]+(\.[0-9]+)?)([- ].*)?$/\1/p' Dockerfile | head -1)"
+          test -n "$v" || { echo "no golang:X.Y builder tag found in Dockerfile" >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+          check-latest: true
+      # govulncheck itself can need a newer Go than the builder (v1.8.0 needs
+      # 1.26), and setup-go sets GOTOOLCHAIN=local: built on a 1.25 builder it
+      # failed "requires go >= 1.26.0" and scanned nothing. So it is built with
+      # GOTOOLCHAIN=auto, and the scan is pinned back to the builder's toolchain.
+      - name: govulncheck
+        run: |
+          image_go="$(go env GOVERSION)"
+          GOTOOLCHAIN=auto go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          echo "scanning with ${image_go}, the toolchain golang:${{ steps.go.outputs.version }} builds with"
+          GOTOOLCHAIN="${image_go}" "$(go env GOPATH)/bin/govulncheck" ./...
